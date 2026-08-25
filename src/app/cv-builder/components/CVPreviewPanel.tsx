@@ -252,73 +252,49 @@ function calculatePageCuts(
     return [0, totalHeight];
   }
 
-  const cuts: number[] = [0];
-
-  /*
-   * Modern structure:
-   *
-   * root
-   *  ├── header
-   *  └── body
-   *       ├── summary
-   *       ├── experience
-   *       ├── education
-   *       ├── skills/languages/certs
-   *       ├── projects
-   *       └── achievements
-   */
-
-  const body =
-    root.children.length > 1
-      ? (root.children[1] as HTMLElement)
-      : null;
-
-  const candidates: number[] = [];
-
-  if (body) {
-    const rootRect =
-      root.getBoundingClientRect();
-
-    Array.from(
-      body.children
-    ).forEach((child) => {
-      const element =
-        child as HTMLElement;
-
-      const rect =
-        element.getBoundingClientRect();
-
-      const bottom =
-        rect.bottom -
-        rootRect.top;
-
-      if (
-        bottom > 50 &&
-        bottom < totalHeight
-      ) {
-        candidates.push(
-          Math.round(bottom)
-        );
-      }
-    });
-  }
-
-  /*
-   * Fallback candidates from elements that explicitly
-   * request break-inside avoidance.
-   */
-
-  const avoidElements =
-    Array.from(
-      root.querySelectorAll(
-        '*'
-      )
-    ) as HTMLElement[];
-
   const rootRect =
     root.getBoundingClientRect();
 
-  avoidElements.forEach(
+  /*
+   * Safe cut positions are collected from:
+   *
+   * 1. Section/entry boundaries.
+   * 2. Elements with break-inside: avoid.
+   * 3. Elements with break-after: avoid.
+   * 4. Individual bullets and numbered items.
+   *
+   * IMPORTANT:
+   * We collect BOTH the TOP and BOTTOM of protected
+   * elements.
+   *
+   * That means when a certification heading is close to
+   * the bottom of a page, the algorithm can break BEFORE
+   * the heading instead of leaving the heading orphaned.
+   */
+  const candidates: number[] = [];
+
+  const addPosition = (
+    value: number
+  ) => {
+    const rounded =
+      Math.round(value);
+
+    if (
+      rounded > 40 &&
+      rounded < totalHeight
+    ) {
+      candidates.push(
+        rounded
+      );
+    }
+  };
+
+  const allElements =
+    Array.from(
+      root.querySelectorAll('*')
+    ) as HTMLElement[];
+
+  allElements.forEach(
     (element) => {
       const style =
         window.getComputedStyle(
@@ -329,33 +305,85 @@ function calculatePageCuts(
         style.breakInside ||
         style.pageBreakInside;
 
-      if (
-        breakInside === 'avoid'
-      ) {
-        const rect =
-          element.getBoundingClientRect();
+      const breakAfter =
+        style.breakAfter ||
+        style.pageBreakAfter;
 
-        const bottom =
-          rect.bottom -
-          rootRect.top;
+      const isListItem =
+        element.matches(
+          '.cv-rich-content li'
+        );
 
-        if (
-          bottom > 50 &&
-          bottom < totalHeight
-        ) {
-          candidates.push(
-            Math.round(bottom)
-          );
-        }
+      const shouldProtect =
+        breakInside === 'avoid' ||
+        breakAfter === 'avoid' ||
+        isListItem;
+
+      if (!shouldProtect) {
+        return;
       }
+
+      const rect =
+        element.getBoundingClientRect();
+
+      const top =
+        rect.top -
+        rootRect.top;
+
+      const bottom =
+        rect.bottom -
+        rootRect.top;
+
+      /*
+       * TOP = safe place to start this protected block
+       * on a new page.
+       */
+      addPosition(top);
+
+      /*
+       * BOTTOM = safe place to finish this block.
+       */
+      addPosition(bottom);
     }
   );
 
   /*
-   * List items should never be split halfway through
-   * a bullet.
+   * Direct body-section boundaries are also safe.
    */
+  const body =
+    root.children.length > 1
+      ? (root.children[1] as HTMLElement)
+      : null;
 
+  if (body) {
+    Array.from(
+      body.children
+    ).forEach((child) => {
+      const element =
+        child as HTMLElement;
+
+      const rect =
+        element.getBoundingClientRect();
+
+      addPosition(
+        rect.top -
+          rootRect.top
+      );
+
+      addPosition(
+        rect.bottom -
+          rootRect.top
+      );
+    });
+  }
+
+  /*
+   * Individual list items are explicitly included.
+   * This protects both:
+   *
+   * • bullet points
+   * 1. numbered points
+   */
   root
     .querySelectorAll(
       '.cv-rich-content li'
@@ -366,18 +394,15 @@ function calculatePageCuts(
           element as HTMLElement
         ).getBoundingClientRect();
 
-      const bottom =
-        rect.bottom -
-        rootRect.top;
+      addPosition(
+        rect.top -
+          rootRect.top
+      );
 
-      if (
-        bottom > 50 &&
-        bottom < totalHeight
-      ) {
-        candidates.push(
-          Math.round(bottom)
-        );
-      }
+      addPosition(
+        rect.bottom -
+          rootRect.top
+      );
     });
 
   const uniqueCandidates =
@@ -386,6 +411,8 @@ function calculatePageCuts(
     ).sort(
       (a, b) => a - b
     );
+
+  const cuts: number[] = [0];
 
   let start = 0;
 
@@ -397,28 +424,47 @@ function calculatePageCuts(
       start + pageHeight;
 
     /*
-     * Prefer a section boundary.
+     * Prefer the latest safe boundary that fits
+     * inside this A4 page.
+     *
+     * Keep at least 60px of usable content on the
+     * current page so we don't create tiny fragments.
      */
-
     let safeCut =
       uniqueCandidates
         .filter(
           (value) =>
-            value > start + 80 &&
+            value >
+              start + 60 &&
             value <= target
         )
         .pop();
 
     /*
-     * If no safe boundary exists,
-     * use the exact A4 boundary.
+     * If the last safe boundary is too close to the
+     * page start, use the exact A4 boundary.
+     *
+     * This fallback is only used when there is no
+     * reasonable protected boundary.
      */
-
     if (
       !safeCut ||
       safeCut <= start
     ) {
       safeCut = target;
+    }
+
+    /*
+     * Never move backwards.
+     */
+    if (
+      safeCut <= start
+    ) {
+      safeCut =
+        Math.min(
+          target,
+          start + pageHeight
+        );
     }
 
     cuts.push(
@@ -435,7 +481,9 @@ function calculatePageCuts(
     cuts[cuts.length - 1] !==
     totalHeight
   ) {
-    cuts.push(totalHeight);
+    cuts.push(
+      totalHeight
+    );
   }
 
   return cuts;
@@ -1151,37 +1199,57 @@ export default function CVPreviewPanel({
           box-sizing: border-box;
         }
 
+        .cv-rich-content {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
+
+        .cv-rich-content ul,
+        .cv-rich-content ol {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          padding-left: 22px !important;
+          margin: 5px 0 !important;
+          list-style-position: outside !important;
+          display: block !important;
+        }
+
         .cv-rich-content ul {
           list-style-type: disc !important;
-          list-style-position: outside !important;
-          padding-left: 18px !important;
-          margin: 6px 0 !important;
-          display: block !important;
         }
 
         .cv-rich-content ol {
           list-style-type: decimal !important;
-          list-style-position: outside !important;
-          padding-left: 18px !important;
-          margin: 6px 0 !important;
-          display: block !important;
         }
 
         .cv-rich-content li {
           display: list-item !important;
-          margin: 2px 0 !important;
-          padding-left: 2px !important;
           list-style-position: outside !important;
+          margin: 2px 0 !important;
+          padding-left: 3px !important;
+          line-height: 1.35 !important;
+          max-width: 100% !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
           break-inside: avoid !important;
           page-break-inside: avoid !important;
         }
 
-        .cv-rich-content ul li {
-          list-style-type: disc !important;
+        .cv-rich-content li p {
+          margin: 0 !important;
+          padding: 0 !important;
         }
 
-        .cv-rich-content ol li {
-          list-style-type: decimal !important;
+        .cv-rich-content ul li::marker {
+          font-size: 0.85em;
+        }
+
+        .cv-rich-content ol li::marker {
+          font-weight: 500;
         }
 
         .cv-rich-content p {
@@ -1201,8 +1269,12 @@ export default function CVPreviewPanel({
         }
 
         .cv-rich-content a {
-          color: inherit;
-          text-decoration: underline;
+          color: inherit !important;
+          text-decoration: underline !important;
+          pointer-events: auto !important;
+          cursor: pointer !important;
+          overflow-wrap: anywhere !important;
+          word-break: break-word !important;
         }
 
         .cv-preview-page {
