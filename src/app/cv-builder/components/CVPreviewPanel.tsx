@@ -3,6 +3,7 @@
 import React from 'react';
 import { CheckCircle } from 'lucide-react';
 import { CVData } from './cvData';
+
 import CVTemplateModerno from './templates/CVTemplateModerno';
 import CVTemplateATS from './templates/CVTemplateATS';
 import CVTemplateEjecutivo from './templates/CVTemplateEjecutivo';
@@ -143,14 +144,12 @@ const headerLabels: Record<
 };
 
 /*
- * Template renderer
- *
  * IMPORTANT:
- * Moderno now receives "lang" so that its CV headings
- * can change between Spanish, English and Portuguese.
  *
- * The other templates are intentionally left unchanged for now.
- * We will add language support to them one by one.
+ * Moderno receives lang.
+ *
+ * The other four templates do not receive lang yet.
+ * We will update them separately after Moderno is confirmed.
  */
 function TemplateRenderer({
   lang,
@@ -164,7 +163,12 @@ function TemplateRenderer({
       return <CVTemplateATS cvData={cvData} />;
 
     case 'moderno':
-      return <CVTemplateModerno lang={lang} cvData={cvData} />;
+      return (
+        <CVTemplateModerno
+          lang={lang}
+          cvData={cvData}
+        />
+      );
 
     case 'ejecutivo':
       return <CVTemplateEjecutivo cvData={cvData} />;
@@ -176,7 +180,12 @@ function TemplateRenderer({
       return <CVTemplateCreativo cvData={cvData} />;
 
     default:
-      return <CVTemplateModerno lang={lang} cvData={cvData} />;
+      return (
+        <CVTemplateModerno
+          lang={lang}
+          cvData={cvData}
+        />
+      );
   }
 }
 
@@ -188,23 +197,21 @@ export default function CVPreviewPanel({
 }: Props) {
   const t = headerLabels[lang];
 
-  const getName = (tpl: (typeof templates)[0]) =>
-    lang === 'es'
-      ? tpl.nameEs
-      : lang === 'en'
-        ? tpl.nameEn
-        : tpl.namePt;
+  const getName = (tpl: (typeof templates)[0]) => {
+    if (lang === 'es') return tpl.nameEs;
+    if (lang === 'en') return tpl.nameEn;
+    return tpl.namePt;
+  };
 
   const currentColor =
     cvData.accentColor || colorPresets[0].value;
 
   const currentFont = cvData.fontStyle || 'sans';
 
-  // Numeric font size: stored as string like "11", "12", etc.
-  // Default 12
-  const rawFontSize = cvData.fontSize as string | undefined;
+  const rawFontSize = cvData.fontSize as
+    | string
+    | undefined;
 
-  // Support legacy 'sm'/'md'/'lg' values
   const legacyMap: Record<string, number> = {
     sm: 10,
     md: 12,
@@ -216,15 +223,21 @@ export default function CVPreviewPanel({
       ? parseInt(rawFontSize, 10)
       : legacyMap[rawFontSize || 'md'] ?? 12;
 
-  const handleFontSizeChange = (val: number) => {
-    const clamped = Math.min(18, Math.max(10, val));
-    onStyleChange({ fontSize: String(clamped) });
+  const handleFontSizeChange = (value: number) => {
+    const clamped = Math.min(
+      18,
+      Math.max(10, value)
+    );
+
+    onStyleChange({
+      fontSize: String(clamped),
+    });
   };
 
   return (
     <div className="flex flex-col h-full">
 
-      {/* Template switcher */}
+      {/* TEMPLATE */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">
         <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
           {t.template}
@@ -234,7 +247,9 @@ export default function CVPreviewPanel({
           {templates.map((tpl) => (
             <button
               key={`preview-tpl-${tpl.id}`}
-              onClick={() => onTemplateChange(tpl.id)}
+              onClick={() =>
+                onTemplateChange(tpl.id)
+              }
               className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all duration-150 ${
                 cvData.templateId === tpl.id
                   ? 'border-primary bg-primary/5 text-primary'
@@ -257,7 +272,7 @@ export default function CVPreviewPanel({
         </div>
       </div>
 
-      {/* Colour options */}
+      {/* ACCENT COLOUR */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">
         <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
           {t.colors}
@@ -284,7 +299,7 @@ export default function CVPreviewPanel({
             />
           ))}
 
-          {/* Custom colour picker */}
+          {/* Custom colour */}
           <label
             className="relative cursor-pointer"
             title="Custom colour"
@@ -320,23 +335,23 @@ export default function CVPreviewPanel({
         </div>
       </div>
 
-      {/* Font style options */}
+      {/* FONT STYLE */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">
         <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
           {t.fonts}
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {fontOptions.map((opt) => (
+          {fontOptions.map((option) => (
             <button
-              key={`font-${opt.value}`}
+              key={`font-${option.value}`}
               onClick={() =>
                 onStyleChange({
-                  fontStyle: opt.value,
+                  fontStyle: option.value,
                 })
               }
               className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg border text-xs transition-all duration-150 ${
-                currentFont === opt.value
+                currentFont === option.value
                   ? 'border-primary bg-primary/5 text-primary'
                   : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
               }`}
@@ -344,21 +359,22 @@ export default function CVPreviewPanel({
               <span
                 className="text-base font-bold leading-none"
                 style={{
-                  fontFamily: opt.fontFamily,
+                  fontFamily:
+                    option.fontFamily,
                 }}
               >
-                {opt.preview}
+                {option.preview}
               </span>
 
               <span className="text-[9px]">
-                {opt.label}
+                {option.label}
               </span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Font size — numeric input */}
+      {/* FONT SIZE */}
       <div className="px-4 py-3 border-b border-border bg-card shrink-0">
         <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-2">
           {t.fontSize}
@@ -367,7 +383,9 @@ export default function CVPreviewPanel({
         <div className="flex items-center gap-3">
           <button
             onClick={() =>
-              handleFontSizeChange(numericSize - 1)
+              handleFontSizeChange(
+                numericSize - 1
+              )
             }
             disabled={numericSize <= 10}
             className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-base font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-30 transition-all"
@@ -383,7 +401,10 @@ export default function CVPreviewPanel({
               value={numericSize}
               onChange={(e) =>
                 handleFontSizeChange(
-                  parseInt(e.target.value, 10) || 12
+                  parseInt(
+                    e.target.value,
+                    10
+                  ) || 12
                 )
               }
               className="w-14 text-center border border-border rounded-lg px-2 py-1 text-sm font-semibold text-foreground bg-background focus:outline-none focus:border-primary"
@@ -396,7 +417,9 @@ export default function CVPreviewPanel({
 
           <button
             onClick={() =>
-              handleFontSizeChange(numericSize + 1)
+              handleFontSizeChange(
+                numericSize + 1
+              )
             }
             disabled={numericSize >= 18}
             className="w-7 h-7 rounded-lg border border-border flex items-center justify-center text-base font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-30 transition-all"
@@ -410,15 +433,15 @@ export default function CVPreviewPanel({
         </div>
       </div>
 
-      {/* CV preview area */}
+      {/* PREVIEW */}
       <div className="flex-1 overflow-hidden bg-muted/30 flex flex-col">
 
         <div className="text-xs font-medium text-muted-foreground py-2 text-center shrink-0">
           {t.preview}
         </div>
 
-        {/* Scrollable preview wrapper */}
         <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-4">
+
           <div
             style={{
               width: '100%',
@@ -426,7 +449,6 @@ export default function CVPreviewPanel({
             }}
           >
 
-            {/* Scale wrapper: renders at 794px then scales down to fit container */}
             <div
               style={{
                 width: '794px',
@@ -436,6 +458,7 @@ export default function CVPreviewPanel({
               }}
               className="cv-preview-scale-wrapper"
             >
+
               <div
                 id="cv-preview-root"
                 className="bg-white shadow-xl"
@@ -445,7 +468,7 @@ export default function CVPreviewPanel({
                 }}
               >
 
-                {/* IMPORTANT: lang is now passed here */}
+                {/* ⭐ CRITICAL LANGUAGE CONNECTION ⭐ */}
                 <TemplateRenderer
                   lang={lang}
                   cvData={cvData}
@@ -454,7 +477,6 @@ export default function CVPreviewPanel({
               </div>
             </div>
 
-            {/* Spacer to account for scaled height */}
             <div
               className="cv-preview-spacer"
               style={{
@@ -466,7 +488,7 @@ export default function CVPreviewPanel({
       </div>
 
       <style>{`
-        /* Preview scale — responsive scaling */
+
         .cv-preview-scale-wrapper {
           --cv-preview-scale: 0.58;
         }
@@ -489,7 +511,6 @@ export default function CVPreviewPanel({
           }
         }
 
-        /* Spacer height = minHeight * scale */
         .cv-preview-spacer {
           height: calc(1123px * 0.58 + 8px);
         }
@@ -512,9 +533,7 @@ export default function CVPreviewPanel({
           }
         }
 
-        /* =====================================================
-           RICH TEXT BULLET/LIST RENDERING
-           ===================================================== */
+        /* Rich text */
 
         #cv-preview-root .cv-rich-content ul {
           list-style-type: disc !important;
@@ -571,10 +590,6 @@ export default function CVPreviewPanel({
           text-decoration: underline;
         }
 
-        /* =====================================================
-           PAGE BOUNDARIES
-           ===================================================== */
-
         #cv-preview-root {
           overflow: visible !important;
         }
@@ -594,6 +609,7 @@ export default function CVPreviewPanel({
             display: list-item !important;
           }
         }
+
       `}</style>
     </div>
   );
