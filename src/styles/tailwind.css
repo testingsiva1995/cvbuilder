@@ -1,0 +1,363 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F8F9FA;
+  --foreground: #2C3E50;
+  --primary: #1B4F72;
+  --primary-foreground: #FFFFFF;
+  --secondary: #2ECC71;
+  --secondary-foreground: #FFFFFF;
+  --accent: #F39C12;
+  --accent-foreground: #FFFFFF;
+  --muted: #ECF0F1;
+  --muted-foreground: #7F8C8D;
+  --card: #FFFFFF;
+  --card-foreground: #2C3E50;
+  --border: #DDE1E7;
+  --input: #FFFFFF;
+  --ring: #1B4F72;
+  --radius: 10px;
+  --font-sans: var(--font-plus-jakarta-sans), sans-serif;
+  --destructive: #E74C3C;
+  --destructive-foreground: #FFFFFF;
+  --warning: #F39C12;
+  --warning-foreground: #FFFFFF;
+  --success: #2ECC71;
+  --success-foreground: #FFFFFF;
+  --sidebar-bg: #1B4F72;
+  --sidebar-fg: #FFFFFF;
+  --sidebar-muted: rgba(255,255,255,0.55);
+  --sidebar-active: rgba(255,255,255,0.15);
+  --sidebar-border: rgba(255,255,255,0.1);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6, p {
+    margin: 0;
+  }
+
+  input, textarea, select {
+    font-family: var(--font-sans);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 2px;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.25s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.15s ease-out forwards;
+  }
+
+  .cv-preview-shadow {
+    box-shadow: 0 4px 24px rgba(27, 79, 114, 0.12), 0 1px 4px rgba(27, 79, 114, 0.08);
+  }
+
+  .gradient-hero {
+    background: linear-gradient(135deg, #1B4F72 0%, #154360 50%, #0D3349 100%);
+  }
+
+  .gradient-card {
+    background: linear-gradient(145deg, #FFFFFF 0%, #F8F9FA 100%);
+  }
+
+  .template-card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .template-card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(27, 79, 114, 0.15);
+  }
+
+  .section-nav-item {
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .progress-bar-fill {
+    transition: width 0.4s ease-out;
+  }
+
+  .btn-primary {
+    background-color: var(--accent);
+    color: var(--accent-foreground);
+    font-weight: 600;
+    border-radius: var(--radius);
+    transition: all 0.15s ease;
+  }
+
+  .btn-primary:hover {
+    background-color: #E08E0B;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(243, 156, 18, 0.35);
+  }
+
+  .btn-primary:active {
+    transform: scale(0.97) translateY(0);
+  }
+
+  .btn-secondary {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+    border-radius: var(--radius);
+    transition: all 0.15s ease;
+  }
+
+  .btn-secondary:hover {
+    background-color: #154360;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(27, 79, 114, 0.3);
+  }
+
+  .btn-secondary:active {
+    transform: scale(0.97) translateY(0);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--foreground);
+    font-weight: 500;
+    border-radius: var(--radius);
+    transition: background-color 0.15s ease;
+  }
+
+  .btn-ghost:hover {
+    background-color: var(--muted);
+  }
+
+  .btn-ghost:active {
+    background-color: var(--border);
+  }
+
+  .input-base {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1.5px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    background-color: var(--input);
+    color: var(--foreground);
+    font-size: 0.875rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    outline: none;
+  }
+
+  .input-base:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(27, 79, 114, 0.1);
+  }
+
+  .input-base::placeholder {
+    color: var(--muted-foreground);
+  }
+
+  .input-error {
+    border-color: var(--destructive);
+    box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+  }
+
+  .card-base {
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+
+  .badge-green {
+    background-color: rgba(46, 204, 113, 0.12);
+    color: #1A9E5A;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 99px;
+    letter-spacing: 0.02em;
+  }
+
+  .badge-blue {
+    background-color: rgba(27, 79, 114, 0.1);
+    color: var(--primary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 99px;
+    letter-spacing: 0.02em;
+  }
+
+  .badge-orange {
+    background-color: rgba(243, 156, 18, 0.12);
+    color: #C87F0A;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: 99px;
+    letter-spacing: 0.02em;
+  }
+
+  .section-complete-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--secondary);
+    flex-shrink: 0;
+  }
+
+  .section-empty-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--border);
+    flex-shrink: 0;
+  }
+
+  .cv-template-classic {
+    font-family: 'Merriweather', Georgia, serif;
+  }
+
+  .cv-template-modern {
+    font-family: var(--font-sans);
+  }
+
+  .faq-answer {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+  }
+
+  .faq-answer.open {
+    max-height: 500px;
+  }
+
+  /* =====================================================================
+     CV RICH TEXT — bullet/list rendering for preview and PDF
+     ===================================================================== */
+  .cv-rich-content ul,
+  #cv-preview-root .cv-rich-content ul {
+    list-style-type: disc !important;
+    list-style-position: outside !important;
+    padding-left: 20px !important;
+    margin: 6px 0 !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+  .cv-rich-content ol,
+  #cv-preview-root .cv-rich-content ol {
+    list-style-type: decimal !important;
+    list-style-position: outside !important;
+    padding-left: 20px !important;
+    margin: 6px 0 !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+  .cv-rich-content li,
+  #cv-preview-root .cv-rich-content li {
+    display: list-item !important;
+    margin: 2px 0 !important;
+    padding-left: 3px !important;
+    list-style: inherit !important;
+    overflow: visible !important;
+  }
+  .cv-rich-content ul li,
+  #cv-preview-root .cv-rich-content ul li {
+    list-style-type: disc !important;
+  }
+  .cv-rich-content ol li,
+  #cv-preview-root .cv-rich-content ol li {
+    list-style-type: decimal !important;
+  }
+  .cv-rich-content p {
+    margin: 0.15em 0;
+  }
+  .cv-rich-content strong { font-weight: 700; }
+  .cv-rich-content em { font-style: italic; }
+  .cv-rich-content u { text-decoration: underline; }
+  .cv-rich-content a { color: inherit; text-decoration: underline; }
+
+  /* =====================================================================
+     CV PAGE BOUNDARIES — prevent content overflow and section splitting
+     ===================================================================== */
+  #cv-preview-root {
+    /* Extra bottom padding so last content on page 2 isn't clipped */
+    padding-bottom: 0 !important;
+    overflow: visible !important;
+  }
+  /* Keep section headings with their content */
+  #cv-preview-root [style*="break-after"],
+  #cv-preview-root [style*="breakAfter"] {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin 1s linear infinite;
+}
