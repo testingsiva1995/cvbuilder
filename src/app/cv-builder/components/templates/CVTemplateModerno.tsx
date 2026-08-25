@@ -232,6 +232,9 @@ export default function CVTemplateModerno({
       color: '#444',
       lineHeight: '1.55',
       overflow: 'visible',
+      maxWidth: '100%',
+      overflowWrap: 'anywhere',
+      wordBreak: 'normal',
 
       /*
        * Prevent the rich-text container itself from being
@@ -263,6 +266,12 @@ export default function CVTemplateModerno({
 
         boxSizing:
           'border-box',
+
+        overflowWrap:
+          'anywhere',
+
+        wordBreak:
+          'normal',
 
         backgroundColor:
           '#ffffff',
@@ -1453,24 +1462,38 @@ export default function CVTemplateModerno({
           ====================================================== */}
 
       <style>{`
-        /*
-         * ======================================================
-         * LIST / BULLET ALIGNMENT
-         * ======================================================
-         *
-         * This creates a hanging indent.
-         *
-         * Correct:
-         *
-         * • This is a long bullet point that wraps
-         *   onto another line and the second line
-         *   starts underneath the text.
-         */
+        /* ======================================================
+           RICH TEXT — SAFE WRAPPING
+           ====================================================== */
+
+        .cv-rich-content {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          overflow: visible !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
+
+        /* ======================================================
+           BULLETS + NUMBERED LISTS
+           ====================================================== */
 
         .cv-rich-content ul,
         .cv-rich-content ol {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+
           margin: 5px 0 !important;
+
+          /*
+           * Marker stays outside the text.
+           * Wrapped lines therefore align underneath
+           * the text rather than underneath the marker.
+           */
           padding-left: 22px !important;
+
           list-style-position: outside !important;
         }
 
@@ -1484,128 +1507,134 @@ export default function CVTemplateModerno({
 
         .cv-rich-content li {
           display: list-item !important;
-
           list-style-position: outside !important;
 
           margin: 2px 0 !important;
-
           padding-left: 3px !important;
 
           line-height: 1.35 !important;
 
+          max-width: 100% !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+
           /*
-           * Never cut one individual bullet in half
-           * when a page break occurs.
+           * Keep one bullet/numbered item together when
+           * it can reasonably fit on the current A4 page.
            */
           break-inside: avoid !important;
-
           page-break-inside: avoid !important;
         }
 
-        .cv-rich-content li::marker {
+        .cv-rich-content ul li::marker {
           font-size: 0.85em;
         }
 
-        /*
-         * Paragraphs
-         */
-
-        .cv-rich-content p {
-          margin:
-            0.15em 0 !important;
+        .cv-rich-content ol li::marker {
+          font-weight: 500;
         }
 
-        /*
-         * Formatting
-         */
+        .cv-rich-content li p {
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        /* ======================================================
+           NORMAL PARAGRAPHS
+           ====================================================== */
+
+        .cv-rich-content p {
+          margin: 0.15em 0 !important;
+          max-width: 100% !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
+
+        /* ======================================================
+           FORMATTING
+           ====================================================== */
 
         .cv-rich-content strong {
-          font-weight:
-            700 !important;
+          font-weight: 700 !important;
         }
 
         .cv-rich-content em {
-          font-style:
-            italic !important;
+          font-style: italic !important;
         }
 
         .cv-rich-content u {
-          text-decoration:
-            underline !important;
+          text-decoration: underline !important;
         }
+
+        /* ======================================================
+           LINKS
+           ====================================================== */
 
         .cv-rich-content a {
-          color:
-            inherit !important;
-
-          text-decoration:
-            underline !important;
+          color: inherit !important;
+          text-decoration: underline !important;
+          pointer-events: auto !important;
+          cursor: pointer !important;
+          overflow-wrap: anywhere !important;
+          word-break: break-word !important;
         }
 
-        /*
-         * ======================================================
-         * TABLES
-         * ======================================================
-         */
+        /* ======================================================
+           TABLES
+           ====================================================== */
 
         .cv-rich-content table {
-          width:
-            100% !important;
-
-          border-collapse:
-            collapse !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          border-collapse: collapse !important;
         }
 
         .cv-rich-content td,
         .cv-rich-content th {
-          vertical-align:
-            top !important;
+          vertical-align: top !important;
+          overflow-wrap: anywhere !important;
         }
 
-        /*
-         * ======================================================
-         * IMAGES INSIDE RICH TEXT
-         * ======================================================
-         */
+        /* ======================================================
+           IMAGES
+           ====================================================== */
 
         .cv-rich-content img {
-          max-width:
-            100% !important;
+          max-width: 100% !important;
+          height: auto !important;
+        }
 
-          height:
-            auto !important;
+        /* ======================================================
+           HEADINGS
+           ====================================================== */
+
+        .cv-rich-content h1,
+        .cv-rich-content h2,
+        .cv-rich-content h3,
+        .cv-rich-content h4,
+        .cv-rich-content h5,
+        .cv-rich-content h6 {
+          max-width: 100% !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+          orphans: 3;
+          widows: 3;
         }
 
         /*
-         * ======================================================
-         * PAGE BREAK SUPPORT
-         * ======================================================
-         *
-         * Individual entries are protected in React styles.
-         * These additional classes help browser print engines.
+         * The section headings themselves already use
+         * break-after: avoid in React styles. This CSS
+         * reinforces that behavior for print engines.
          */
-
-        .cv-rich-content {
-          overflow:
-            visible !important;
-        }
-
-        /*
-         * Prevent headings from becoming isolated at the
-         * bottom of a page.
-         */
-
         h1,
         h2,
         h3,
         h4,
         h5,
         h6 {
-          orphans:
-            3;
-
-          widows:
-            3;
+          orphans: 3;
+          widows: 3;
         }
       `}</style>
     </div>
