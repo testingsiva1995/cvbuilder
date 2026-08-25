@@ -481,6 +481,7 @@ export default function CVTemplateModerno({
           ====================================================== */}
 
       <div
+        data-cv-body="true"
         style={{
           padding:
             '20px 48px 48px 48px',
@@ -889,6 +890,7 @@ export default function CVTemplateModerno({
           cvData.certifications
             .length > 0) && (
           <div
+            data-cv-page-block="skills-languages-certifications"
             style={{
               ...sectionStyle,
 
@@ -903,6 +905,13 @@ export default function CVTemplateModerno({
 
               alignItems:
                 'start',
+
+              /* Keep the complete two-column block together when it fits. */
+              breakInside:
+                'avoid',
+
+              pageBreakInside:
+                'avoid',
             }}
           >
             {/* ==================================================
@@ -1463,85 +1472,16 @@ export default function CVTemplateModerno({
 
       <style>{`
         /* ======================================================
-           RICH TEXT — SAFE WRAPPING
+           RICH TEXT — SAFE WIDTH / WRAPPING
            ====================================================== */
 
         .cv-rich-content {
           width: 100% !important;
           max-width: 100% !important;
           box-sizing: border-box !important;
-          overflow: visible !important;
           overflow-wrap: anywhere !important;
           word-break: normal !important;
         }
-
-        /* ======================================================
-           BULLETS + NUMBERED LISTS
-           ====================================================== */
-
-        .cv-rich-content ul,
-        .cv-rich-content ol {
-          width: 100% !important;
-          max-width: 100% !important;
-          box-sizing: border-box !important;
-
-          margin: 5px 0 !important;
-
-          /*
-           * Marker stays outside the text.
-           * Wrapped lines therefore align underneath
-           * the text rather than underneath the marker.
-           */
-          padding-left: 22px !important;
-
-          list-style-position: outside !important;
-        }
-
-        .cv-rich-content ul {
-          list-style-type: disc !important;
-        }
-
-        .cv-rich-content ol {
-          list-style-type: decimal !important;
-        }
-
-        .cv-rich-content li {
-          display: list-item !important;
-          list-style-position: outside !important;
-
-          margin: 2px 0 !important;
-          padding-left: 3px !important;
-
-          line-height: 1.35 !important;
-
-          max-width: 100% !important;
-          overflow-wrap: anywhere !important;
-          word-break: normal !important;
-
-          /*
-           * Keep one bullet/numbered item together when
-           * it can reasonably fit on the current A4 page.
-           */
-          break-inside: avoid !important;
-          page-break-inside: avoid !important;
-        }
-
-        .cv-rich-content ul li::marker {
-          font-size: 0.85em;
-        }
-
-        .cv-rich-content ol li::marker {
-          font-weight: 500;
-        }
-
-        .cv-rich-content li p {
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-
-        /* ======================================================
-           NORMAL PARAGRAPHS
-           ====================================================== */
 
         .cv-rich-content p {
           margin: 0.15em 0 !important;
@@ -1551,8 +1491,90 @@ export default function CVTemplateModerno({
         }
 
         /* ======================================================
-           FORMATTING
+           BULLETS — CUSTOM MARKER
+
+           Browser ::marker can sit slightly above/below the first
+           text line depending on the font. A controlled pseudo
+           marker keeps the bullet vertically aligned and gives
+           wrapped lines a perfect hanging indent.
            ====================================================== */
+
+        .cv-rich-content ul,
+        .cv-rich-content ol {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          margin: 5px 0 !important;
+          padding: 0 !important;
+          list-style: none !important;
+        }
+
+        .cv-rich-content ul li,
+        .cv-rich-content ol li {
+          position: relative !important;
+          display: block !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+
+          margin: 2px 0 !important;
+          padding-left: 19px !important;
+
+          line-height: 1.35 !important;
+
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+
+          break-inside: avoid !important;
+          page-break-inside: avoid !important;
+        }
+
+        /* Bullet marker */
+        .cv-rich-content ul li::before {
+          content: '•';
+          position: absolute;
+          left: 0;
+          top: 0.02em;
+          width: 14px;
+          text-align: center;
+          font-size: 0.82em;
+          line-height: 1.35;
+          font-weight: 700;
+        }
+
+        /* Number marker */
+        .cv-rich-content ol {
+          counter-reset: cv-list-item;
+        }
+
+        .cv-rich-content ol li {
+          counter-increment: cv-list-item;
+        }
+
+        .cv-rich-content ol li::before {
+          content: counter(cv-list-item) '.';
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 17px;
+          text-align: right;
+          font-size: 0.9em;
+          line-height: 1.35;
+          font-weight: 500;
+        }
+
+        .cv-rich-content li p {
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        /* Nested lists retain indentation without losing alignment. */
+        .cv-rich-content li > ul,
+        .cv-rich-content li > ol {
+          margin-top: 3px !important;
+          margin-bottom: 3px !important;
+          margin-left: 2px !important;
+        }
 
         .cv-rich-content strong {
           font-weight: 700 !important;
@@ -1579,10 +1601,6 @@ export default function CVTemplateModerno({
           word-break: break-word !important;
         }
 
-        /* ======================================================
-           TABLES
-           ====================================================== */
-
         .cv-rich-content table {
           width: 100% !important;
           max-width: 100% !important;
@@ -1596,37 +1614,11 @@ export default function CVTemplateModerno({
           overflow-wrap: anywhere !important;
         }
 
-        /* ======================================================
-           IMAGES
-           ====================================================== */
-
         .cv-rich-content img {
           max-width: 100% !important;
           height: auto !important;
         }
 
-        /* ======================================================
-           HEADINGS
-           ====================================================== */
-
-        .cv-rich-content h1,
-        .cv-rich-content h2,
-        .cv-rich-content h3,
-        .cv-rich-content h4,
-        .cv-rich-content h5,
-        .cv-rich-content h6 {
-          max-width: 100% !important;
-          overflow-wrap: anywhere !important;
-          word-break: normal !important;
-          orphans: 3;
-          widows: 3;
-        }
-
-        /*
-         * The section headings themselves already use
-         * break-after: avoid in React styles. This CSS
-         * reinforces that behavior for print engines.
-         */
         h1,
         h2,
         h3,
