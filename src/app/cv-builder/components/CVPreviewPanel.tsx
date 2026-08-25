@@ -252,238 +252,175 @@ function calculatePageCuts(
     return [0, totalHeight];
   }
 
-  const rootRect =
-    root.getBoundingClientRect();
+  const rootRect = root.getBoundingClientRect();
+  const toTop = (element: HTMLElement) =>
+    element.getBoundingClientRect().top - rootRect.top;
+  const toBottom = (element: HTMLElement) =>
+    element.getBoundingClientRect().bottom - rootRect.top;
 
-  /*
-   * Safe cut positions are collected from:
-   *
-   * 1. Section/entry boundaries.
-   * 2. Elements with break-inside: avoid.
-   * 3. Elements with break-after: avoid.
-   * 4. Individual bullets and numbered items.
-   *
-   * IMPORTANT:
-   * We collect BOTH the TOP and BOTTOM of protected
-   * elements.
-   *
-   * That means when a certification heading is close to
-   * the bottom of a page, the algorithm can break BEFORE
-   * the heading instead of leaving the heading orphaned.
-   */
-  const candidates: number[] = [];
+  const MIN_USABLE_FRAGMENT = 90;
+  const MIN_PAGE_CONTENT = 120;
 
-  const addPosition = (
-    value: number
-  ) => {
-    const rounded =
-      Math.round(value);
+  const body =
+    root.querySelector(
+      '[data-cv-body="true"]'
+    ) as HTMLElement | null;
 
+  const blocks = body
+    ? Array.from(body.children)
+        .map((child) => child as HTMLElement)
+        .filter((element) => element.getBoundingClientRect().height > 0)
+        .map((element) => ({
+          top: toTop(element),
+          bottom: toBottom(element),
+        }))
+    : [];
+
+  const boundaries: number[] = [];
+
+  const addBoundary = (value: number) => {
+    const rounded = Math.round(value);
     if (
-      rounded > 40 &&
-      rounded < totalHeight
+      rounded > 20 &&
+      rounded < totalHeight - 1
     ) {
-      candidates.push(
-        rounded
-      );
+      boundaries.push(rounded);
     }
   };
 
-  const allElements =
-    Array.from(
-      root.querySelectorAll('*')
-    ) as HTMLElement[];
+  blocks.forEach((block) => {
+    addBoundary(block.top);
+    addBoundary(block.bottom);
+  });
 
-  allElements.forEach(
-    (element) => {
-      const style =
-        window.getComputedStyle(
-          element
-        );
+  root.querySelectorAll('*').forEach((node) => {
+    const element = node as HTMLElement;
+    const rect = element.getBoundingClientRect();
+    if (rect.height <= 0) return;
 
-      const breakInside =
-        style.breakInside ||
-        style.pageBreakInside;
+    const style = window.getComputedStyle(element);
+    const protectedElement =
+      element.matches('.cv-rich-content li') ||
+      style.breakInside === 'avoid' ||
+      style.pageBreakInside === 'avoid' ||
+      style.breakAfter === 'avoid' ||
+      style.pageBreakAfter === 'avoid';
 
-      const breakAfter =
-        style.breakAfter ||
-        style.pageBreakAfter;
+    if (!protectedElement) return;
 
-      const isListItem =
-        element.matches(
-          '.cv-rich-content li'
-        );
+    addBoundary(rect.top - rootRect.top);
+    addBoundary(rect.bottom - rootRect.top);
+  });
 
-      const shouldProtect =
-        breakInside === 'avoid' ||
-        breakAfter === 'avoid' ||
-        isListItem;
+  root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((node) => {
+    addBoundary(
+      (node as HTMLElement).getBoundingClientRect().top - rootRect.top
+    );
+  });
 
-      if (!shouldProtect) {
-        return;
-      }
-
-      const rect =
-        element.getBoundingClientRect();
-
-      const top =
-        rect.top -
-        rootRect.top;
-
-      const bottom =
-        rect.bottom -
-        rootRect.top;
-
-      /*
-       * TOP = safe place to start this protected block
-       * on a new page.
-       */
-      addPosition(top);
-
-      /*
-       * BOTTOM = safe place to finish this block.
-       */
-      addPosition(bottom);
-    }
+  const safe = Array.from(new Set(boundaries)).sort(
+    (a, b) => a - b
   );
 
-  /*
-   * Direct body-section boundaries are also safe.
-   */
-  const body =
-    root.children.length > 1
-      ? (root.children[1] as HTMLElement)
-      : null;
-
-  if (body) {
-    Array.from(
-      body.children
-    ).forEach((child) => {
-      const element =
-        child as HTMLElement;
-
-      const rect =
-        element.getBoundingClientRect();
-
-      addPosition(
-        rect.top -
-          rootRect.top
-      );
-
-      addPosition(
-        rect.bottom -
-          rootRect.top
-      );
-    });
-  }
-
-  /*
-   * Individual list items are explicitly included.
-   * This protects both:
-   *
-   * • bullet points
-   * 1. numbered points
-   */
-  root
-    .querySelectorAll(
-      '.cv-rich-content li'
-    )
-    .forEach((element) => {
-      const rect =
-        (
-          element as HTMLElement
-        ).getBoundingClientRect();
-
-      addPosition(
-        rect.top -
-          rootRect.top
-      );
-
-      addPosition(
-        rect.bottom -
-          rootRect.top
-      );
-    });
-
-  const uniqueCandidates =
-    Array.from(
-      new Set(candidates)
-    ).sort(
-      (a, b) => a - b
+  const blockAt = (y: number) =>
+    blocks.find(
+      (block) =>
+        y > block.top + 1 &&
+        y < block.bottom - 1
     );
 
-  const cuts: number[] = [0];
-
+  const cuts = [0];
   let start = 0;
 
-  while (
-    start + pageHeight <
-    totalHeight
-  ) {
-    const target =
-      start + pageHeight;
+  while (start + pageHeight < totalHeight - 1) {
+    const target = start + pageHeight;
+    const crossing = blockAt(target - 1);
 
-    /*
-     * Prefer the latest safe boundary that fits
-     * inside this A4 page.
-     *
-     * Keep at least 60px of usable content on the
-     * current page so we don't create tiny fragments.
-     */
-    let safeCut =
-      uniqueCandidates
-        .filter(
+    if (crossing) {
+      const blockHeight = crossing.bottom - crossing.top;
+      const spaceBefore = crossing.top - start;
+      const remainingInsideBlock = target - crossing.top;
+
+      /*
+       * A normal-sized section that would contribute only a tiny
+       * fragment is moved completely to the next page.
+       */
+      if (
+        blockHeight <= pageHeight &&
+        spaceBefore > MIN_PAGE_CONTENT &&
+        remainingInsideBlock < MIN_USABLE_FRAGMENT
+      ) {
+        const cut = Math.round(crossing.top);
+        cuts.push(cut);
+        start = cut;
+        continue;
+      }
+
+      /*
+       * A long section may cross a page. Find the latest protected
+       * entry/bullet boundary that still fits.
+       */
+      if (blockHeight > pageHeight) {
+        const inside = safe.filter(
           (value) =>
-            value >
-              start + 60 &&
-            value <= target
-        )
-        .pop();
-
-    /*
-     * If the last safe boundary is too close to the
-     * page start, use the exact A4 boundary.
-     *
-     * This fallback is only used when there is no
-     * reasonable protected boundary.
-     */
-    if (
-      !safeCut ||
-      safeCut <= start
-    ) {
-      safeCut = target;
-    }
-
-    /*
-     * Never move backwards.
-     */
-    if (
-      safeCut <= start
-    ) {
-      safeCut =
-        Math.min(
-          target,
-          start + pageHeight
+            value > start + MIN_PAGE_CONTENT &&
+            value <= target &&
+            value > crossing.top + 1 &&
+            value < crossing.bottom - 1
         );
+
+        if (inside.length) {
+          const cut = inside[inside.length - 1];
+          cuts.push(cut);
+          start = cut;
+          continue;
+        }
+      }
+
+      /*
+       * Normal section does not fit in remaining space: start it on
+       * the next page rather than splitting it.
+       */
+      if (
+        blockHeight <= pageHeight &&
+        crossing.top > start + MIN_PAGE_CONTENT
+      ) {
+        const cut = Math.round(crossing.top);
+        cuts.push(cut);
+        start = cut;
+        continue;
+      }
     }
 
-    cuts.push(
-      Math.min(
-        safeCut,
-        totalHeight
-      )
+    const candidates = safe.filter(
+      (value) =>
+        value > start + MIN_PAGE_CONTENT &&
+        value <= target
     );
 
-    start = safeCut;
+    let cut = candidates.length
+      ? candidates[candidates.length - 1]
+      : target;
+
+    const candidateBlock = blockAt(cut + 1);
+    if (
+      candidateBlock &&
+      cut - candidateBlock.top < MIN_USABLE_FRAGMENT &&
+      candidateBlock.top > start + MIN_PAGE_CONTENT
+    ) {
+      cut = Math.round(candidateBlock.top);
+    }
+
+    if (cut <= start) {
+      cut = target;
+    }
+
+    cuts.push(Math.min(cut, totalHeight));
+    start = cut;
   }
 
-  if (
-    cuts[cuts.length - 1] !==
-    totalHeight
-  ) {
-    cuts.push(
-      totalHeight
-    );
+  if (cuts[cuts.length - 1] !== totalHeight) {
+    cuts.push(totalHeight);
   }
 
   return cuts;
@@ -1212,44 +1149,63 @@ export default function CVPreviewPanel({
           width: 100% !important;
           max-width: 100% !important;
           box-sizing: border-box !important;
-          padding-left: 22px !important;
           margin: 5px 0 !important;
-          list-style-position: outside !important;
+          padding: 0 !important;
+          list-style: none !important;
           display: block !important;
         }
 
-        .cv-rich-content ul {
-          list-style-type: disc !important;
-        }
-
-        .cv-rich-content ol {
-          list-style-type: decimal !important;
-        }
-
-        .cv-rich-content li {
-          display: list-item !important;
-          list-style-position: outside !important;
-          margin: 2px 0 !important;
-          padding-left: 3px !important;
-          line-height: 1.35 !important;
+        .cv-rich-content ul li,
+        .cv-rich-content ol li {
+          position: relative !important;
+          display: block !important;
+          width: 100% !important;
           max-width: 100% !important;
+          box-sizing: border-box !important;
+          margin: 2px 0 !important;
+          padding-left: 19px !important;
+          line-height: 1.35 !important;
           overflow-wrap: anywhere !important;
           word-break: normal !important;
           break-inside: avoid !important;
           page-break-inside: avoid !important;
         }
 
+        .cv-rich-content ul li::before {
+          content: '•';
+          position: absolute;
+          left: 0;
+          top: 0.02em;
+          width: 14px;
+          text-align: center;
+          font-size: 0.82em;
+          line-height: 1.35;
+          font-weight: 700;
+        }
+
+        .cv-rich-content ol {
+          counter-reset: cv-list-item;
+        }
+
+        .cv-rich-content ol li {
+          counter-increment: cv-list-item;
+        }
+
+        .cv-rich-content ol li::before {
+          content: counter(cv-list-item) '.';
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 17px;
+          text-align: right;
+          font-size: 0.9em;
+          line-height: 1.35;
+          font-weight: 500;
+        }
+
         .cv-rich-content li p {
           margin: 0 !important;
           padding: 0 !important;
-        }
-
-        .cv-rich-content ul li::marker {
-          font-size: 0.85em;
-        }
-
-        .cv-rich-content ol li::marker {
-          font-weight: 500;
         }
 
         .cv-rich-content p {
