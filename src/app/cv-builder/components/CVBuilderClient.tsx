@@ -41,149 +41,222 @@ function getSafePageCuts(root: HTMLElement): number[] {
   }
 
   const rootRect = root.getBoundingClientRect();
-  const candidates: number[] = [];
+  const toRootY = (element: HTMLElement) =>
+    element.getBoundingClientRect().top - rootRect.top;
+  const bottomRootY = (element: HTMLElement) =>
+    element.getBoundingClientRect().bottom - rootRect.top;
 
-  const addCandidate = (value: number) => {
+  /*
+   * A page should be filled as much as possible, but a section should
+   * not be reduced to a tiny fragment just to use the last few pixels.
+   * 90px is roughly one short CV line + its surrounding spacing.
+   */
+  const MIN_USABLE_FRAGMENT = 90;
+  const MIN_PAGE_CONTENT = 120;
+
+  /*
+   * Moderno renders:
+   *   root -> header, body, style
+   * and the direct children of body are the major CV blocks.
+   * We use those blocks for the primary pagination decision.
+   */
+  const body =
+    root.querySelector(
+      '[data-cv-body="true"]'
+    ) as HTMLElement | null;
+
+  const topLevelBlocks = body
+    ? Array.from(body.children)
+        .map((child) => child as HTMLElement)
+        .filter((element) => element.getBoundingClientRect().height > 0)
+        .map((element) => ({
+          element,
+          top: toRootY(element),
+          bottom: bottomRootY(element),
+        }))
+    : [];
+
+  /*
+   * Safe internal boundaries. These are the tops/bottoms of entries,
+   * bullets and headings. We NEVER cut through a protected element.
+   */
+  const safeBoundaries: number[] = [];
+
+  const addBoundary = (value: number) => {
     const rounded = Math.round(value);
     if (
-      rounded > PAGE_BREAK_MIN &&
-      rounded < totalHeight
+      rounded > 20 &&
+      rounded < totalHeight - 1
     ) {
-      candidates.push(rounded);
+      safeBoundaries.push(rounded);
     }
   };
 
-  /*
-   * Protect logical entries, headings and list items.
-   * The template already marks entries with breakInside: avoid.
-   */
-  const protectedElements = Array.from(
-    root.querySelectorAll(
-      [
-        '.cv-rich-content li',
-        '[style*="break-inside"]',
-        '[style*="page-break-inside"]',
-        '[style*="break-after"]',
-        '[style*="page-break-after"]',
-      ].join(',')
-    )
+  topLevelBlocks.forEach((block) => {
+    addBoundary(block.top);
+    addBoundary(block.bottom);
+  });
+
+  const descendants = Array.from(
+    root.querySelectorAll('*')
   ) as HTMLElement[];
 
-  protectedElements.forEach((element) => {
+  descendants.forEach((element) => {
     const rect = element.getBoundingClientRect();
-    const top = rect.top - rootRect.top;
-    const bottom = rect.bottom - rootRect.top;
+    if (rect.height <= 0) return;
 
     const style = window.getComputedStyle(element);
-    const protectedBlock =
-      element.matches('.cv-rich-content li') ||
+    const isListItem = element.matches('.cv-rich-content li');
+    const isProtected =
+      isListItem ||
       style.breakInside === 'avoid' ||
       style.pageBreakInside === 'avoid' ||
       style.breakAfter === 'avoid' ||
       style.pageBreakAfter === 'avoid';
 
-    if (!protectedBlock) return;
+    if (!isProtected) return;
 
-    /*
-     * For a protected entry, the top is the important cut:
-     * if the entry does not fit, start it on the next page.
-     */
-    addCandidate(top);
-    addCandidate(bottom);
+    addBoundary(rect.top - rootRect.top);
+    addBoundary(rect.bottom - rootRect.top);
   });
 
-  /*
-   * Every direct child of the CV body is a section boundary.
-   * This is what prevents EDUCATION / CERTIFICATIONS headings
-   * from being stranded at the bottom.
-   */
-  /*
-   * Moderno and the other templates render the A4 root as:
-   *   1. header
-   *   2. body
-   *   3. style
-   *
-   * Use the second child when available. Falling back to the
-   * last non-style element keeps this helper usable with the
-   * other templates too.
-   */
-  const body =
-    (root.children[1] as HTMLElement | undefined) ||
-    (Array.from(root.children).find(
-      (child) =>
-        child.tagName.toLowerCase() !== 'style' &&
-        (child as HTMLElement).children.length > 0
-    ) as HTMLElement | undefined);
-
-  if (body) {
-    Array.from(body.children).forEach((child) => {
-      const element = child as HTMLElement;
-      const rect = element.getBoundingClientRect();
-
-      addCandidate(rect.top - rootRect.top);
-      addCandidate(rect.bottom - rootRect.top);
-
-      /*
-       * Also inspect first-level section children.
-       */
-      Array.from(element.children).forEach((nested) => {
-        const nestedElement = nested as HTMLElement;
-        const nestedRect =
-          nestedElement.getBoundingClientRect();
-
-        addCandidate(
-          nestedRect.top - rootRect.top
-        );
-      });
-    });
-  }
-
-  /*
-   * Explicit headings are safe places to begin a new page.
-   */
   root.querySelectorAll(
-    '.cv-rich-content + div, h1, h2, h3, h4, h5, h6'
+    'h1,h2,h3,h4,h5,h6'
   ).forEach((element) => {
-    const rect = (
-      element as HTMLElement
-    ).getBoundingClientRect();
-
-    addCandidate(
-      rect.top - rootRect.top
+    addBoundary(
+      element.getBoundingClientRect().top - rootRect.top
     );
   });
 
-  const safe = Array.from(
-    new Set(candidates)
+  const uniqueBoundaries = Array.from(
+    new Set(safeBoundaries)
   ).sort((a, b) => a - b);
+
+  const getBlockAt = (y: number) =>
+    topLevelBlocks.find(
+      (block) =>
+        y > block.top + 1 &&
+        y < block.bottom - 1
+    );
+
+  const getInternalCut = (
+    start: number,
+    target: number,
+    block: {
+      top: number;
+      bottom: number;
+    }
+  ) => {
+    const candidates = uniqueBoundaries.filter(
+      (value) =>
+        value > start + MIN_PAGE_CONTENT &&
+        value <= target &&
+        value > block.top + 1 &&
+        value < block.bottom - 1
+    );
+
+    /*
+     * Prefer the latest safe boundary. This maximises page usage.
+     */
+    return candidates.length
+      ? candidates[candidates.length - 1]
+      : null;
+  };
 
   const cuts = [0];
   let start = 0;
 
-  while (start + A4_HEIGHT_PX < totalHeight) {
+  while (start + A4_HEIGHT_PX < totalHeight - 1) {
     const target = start + A4_HEIGHT_PX;
+    const crossingBlock = getBlockAt(target - 1);
 
     /*
-     * Choose the latest safe boundary before the A4 limit.
-     * Avoid a tiny fragment at the bottom of the page.
+     * CASE 1: the next complete top-level section fits on the current
+     * page. There is no reason to move it to the next page.
      */
-    let cut = safe
-      .filter(
-        (value) =>
-          value > start + PAGE_BREAK_MIN &&
-          value <= target
-      )
-      .pop();
+    if (crossingBlock) {
+      const blockHeight =
+        crossingBlock.bottom - crossingBlock.top;
+      const spaceBeforeBlock =
+        crossingBlock.top - start;
 
-    if (!cut || cut <= start) {
-      cut = target;
+      /*
+       * If the whole section fits on a fresh A4 page but only a tiny
+       * part of it would fit here, move the COMPLETE section forward.
+       * This is the key rule that prevents a one-line orphan section.
+       */
+      if (
+        blockHeight <= A4_HEIGHT_PX &&
+        spaceBeforeBlock > MIN_PAGE_CONTENT &&
+        target - crossingBlock.top < MIN_USABLE_FRAGMENT
+      ) {
+        cuts.push(Math.round(crossingBlock.top));
+        start = Math.round(crossingBlock.top);
+        continue;
+      }
+
+      /*
+       * If the section is larger than one page, it must split internally.
+       * Use the latest safe entry/bullet boundary that fits.
+       */
+      if (blockHeight > A4_HEIGHT_PX) {
+        const internalCut = getInternalCut(
+          start,
+          target,
+          crossingBlock
+        );
+
+        if (internalCut && internalCut > start) {
+          cuts.push(internalCut);
+          start = internalCut;
+          continue;
+        }
+      }
+
+      /*
+       * The section is normal-sized but doesn't fit in the remaining
+       * space. If the previous content is already substantial, start the
+       * whole section on the next page.
+       */
+      if (
+        blockHeight <= A4_HEIGHT_PX &&
+        crossingBlock.top > start + MIN_PAGE_CONTENT
+      ) {
+        cuts.push(Math.round(crossingBlock.top));
+        start = Math.round(crossingBlock.top);
+        continue;
+      }
     }
 
     /*
-     * If the chosen candidate would leave almost an empty
-     * page, use the exact A4 boundary instead.
+     * CASE 2: no useful top-level block boundary exists. Use the latest
+     * safe internal boundary. This handles long experience/summary blocks.
      */
-    if (cut - start < PAGE_BREAK_MIN) {
+    const internalCandidates = uniqueBoundaries.filter(
+      (value) =>
+        value > start + MIN_PAGE_CONTENT &&
+        value <= target
+    );
+
+    let cut = internalCandidates.length
+      ? internalCandidates[internalCandidates.length - 1]
+      : target;
+
+    /*
+     * Never leave only a tiny fragment of the current block on a page.
+     * If the candidate is extremely close to the beginning of a block,
+     * move to that block's top instead.
+     */
+    const candidateBlock = getBlockAt(cut + 1);
+    if (
+      candidateBlock &&
+      cut - candidateBlock.top < MIN_USABLE_FRAGMENT &&
+      candidateBlock.top > start + MIN_PAGE_CONTENT
+    ) {
+      cut = Math.round(candidateBlock.top);
+    }
+
+    if (cut <= start) {
       cut = target;
     }
 
@@ -631,53 +704,99 @@ export default function CVBuilderClient() {
           }
 
           .cv-rich-content {
-            width: 100% !important;
-            max-width: 100% !important;
-            overflow-wrap: anywhere !important;
-            word-break: normal !important;
-          }
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
 
-          .cv-rich-content ul,
-          .cv-rich-content ol {
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 5px 0 !important;
-            padding-left: 22px !important;
-            list-style-position: outside !important;
-          }
+        .cv-rich-content p {
+          margin: 0.15em 0 !important;
+          max-width: 100% !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
 
-          .cv-rich-content ul {
-            list-style-type: disc !important;
-          }
+        .cv-rich-content ul,
+        .cv-rich-content ol {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          margin: 5px 0 !important;
+          padding: 0 !important;
+          list-style: none !important;
+        }
 
-          .cv-rich-content ol {
-            list-style-type: decimal !important;
-          }
+        .cv-rich-content ul li,
+        .cv-rich-content ol li {
+          position: relative !important;
+          display: block !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          margin: 2px 0 !important;
+          padding-left: 19px !important;
+          line-height: 1.35 !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+          break-inside: avoid !important;
+          page-break-inside: avoid !important;
+        }
 
-          .cv-rich-content li {
-            display: list-item !important;
-            list-style-position: outside !important;
-            margin: 2px 0 !important;
-            padding-left: 3px !important;
-            line-height: 1.35 !important;
-            max-width: 100% !important;
-            overflow-wrap: anywhere !important;
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
-          }
+        .cv-rich-content ul li::before {
+          content: '•';
+          position: absolute;
+          left: 0;
+          top: 0.02em;
+          width: 14px;
+          text-align: center;
+          font-size: 0.82em;
+          line-height: 1.35;
+          font-weight: 700;
+        }
 
-          .cv-rich-content li p {
-            margin: 0 !important;
-            padding: 0 !important;
-          }
+        .cv-rich-content ol {
+          counter-reset: cv-list-item;
+        }
 
-          .cv-rich-content a {
-            color: inherit !important;
-            text-decoration: underline !important;
-            pointer-events: auto !important;
-          }
+        .cv-rich-content ol li {
+          counter-increment: cv-list-item;
+        }
 
-          .cv-rich-content img {
+        .cv-rich-content ol li::before {
+          content: counter(cv-list-item) '.';
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 17px;
+          text-align: right;
+          font-size: 0.9em;
+          line-height: 1.35;
+          font-weight: 500;
+        }
+
+        .cv-rich-content li p {
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        .cv-rich-content li > ul,
+        .cv-rich-content li > ol {
+          margin-top: 3px !important;
+          margin-bottom: 3px !important;
+          margin-left: 2px !important;
+        }
+
+        .cv-rich-content a {
+          color: inherit !important;
+          text-decoration: underline !important;
+          pointer-events: auto !important;
+          overflow-wrap: anywhere !important;
+          word-break: break-word !important;
+        }
+
+        .cv-rich-content img {
             max-width: 100% !important;
             height: auto !important;
           }
@@ -942,8 +1061,10 @@ export default function CVBuilderClient() {
             PDF_SCALE;
 
           pageCanvas.height =
-            A4_HEIGHT_PX *
-            PDF_SCALE;
+            Math.min(
+              sourceHeight,
+              A4_HEIGHT_PX * PDF_SCALE
+            );
 
           const ctx =
             pageCanvas.getContext(
@@ -970,6 +1091,11 @@ export default function CVBuilderClient() {
            * Draw the actual content at the top of the A4 page.
            * No artificial 15mm white border is added.
            */
+          const destinationHeight = Math.min(
+            sourceHeight,
+            pageCanvas.height
+          );
+
           ctx.drawImage(
             canvas,
             0,
@@ -979,10 +1105,7 @@ export default function CVBuilderClient() {
             0,
             0,
             canvas.width,
-            Math.min(
-              sourceHeight,
-              pageCanvas.height
-            )
+            destinationHeight
           );
 
           /*
@@ -994,13 +1117,21 @@ export default function CVBuilderClient() {
               'image/png'
             );
 
+          const physicalHeightMM =
+            (pageCanvas.height /
+              (A4_HEIGHT_PX * PDF_SCALE)) *
+            pageHeightMM;
+
           pdf.addImage(
             pageImg,
             'PNG',
             0,
             0,
             pageWidthMM,
-            pageHeightMM,
+            Math.min(
+              pageHeightMM,
+              physicalHeightMM
+            ),
             undefined,
             'FAST'
           );
