@@ -837,11 +837,6 @@ export default function CVBuilderClient() {
             'div'
           );
 
-        container.setAttribute(
-          'data-cv-export-root',
-          'true'
-        );
-
         container.style.cssText = `
           position: fixed;
           left: -100000px;
@@ -871,16 +866,6 @@ export default function CVBuilderClient() {
             margin: 0 !important;
             padding: 0 !important;
             background: #ffffff !important;
-          }
-
-          [data-cv-export-root] {
-            margin: 0 !important;
-            padding: 0 !important;
-            top: 0 !important;
-          }
-
-          [data-cv-export-root] > div:not(style) {
-            margin-top: 0 !important;
           }
 
           .cv-rich-content {
@@ -1307,7 +1292,7 @@ export default function CVBuilderClient() {
           const pageImg =
             pageCanvas.toDataURL(
               'image/jpeg',
-              0.82
+              0.94
             );
 
           pdf.addImage(
