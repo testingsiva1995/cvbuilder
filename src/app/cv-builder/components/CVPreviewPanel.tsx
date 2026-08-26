@@ -696,27 +696,40 @@ function PagedCVPreview({
   cvData: CVData;
   pageLabel: string;
 }) {
-  const measureRef =
-    useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLDivElement | null>(null);
 
-  const [pageCuts, setPageCuts] =
-    useState<number[]>([0, A4_HEIGHT]);
+  const [pageCuts, setPageCuts] = useState<number[]>([
+    0,
+    A4_HEIGHT,
+  ]);
 
-  const [previewScale, setPreviewScale] =
-    useState(0.58);
+  const [previewScale, setPreviewScale] = useState(0.58);
 
   /*
    * IMPORTANT:
-   * Preview uses the SAME page-cut calculation as the PDF.
    *
-   * The PDF draws only the real content segment for each page and
-   * leaves the remaining 3 cm safety area white. The preview must do
-   * exactly the same thing. We therefore clip each preview page to
-   * (pageCuts[i + 1] - pageCuts[i]), NOT to the full A4 height.
+   * Preview does NOT create its own pagination.
    *
-   * This prevents page 1 content from leaking into page 2 in preview
-   * and makes Preview and Download use the same visible boundaries.
+   * It uses the SAME calculatePageCuts() used by the PDF
+   * pagination system.
+   *
+   * PDF:
+   *   sourceTop = cuts[page] * PDF_SCALE
+   *   sourceBottom = cuts[page + 1] * PDF_SCALE
+   *
+   * Preview:
+   *   offset = cuts[page]
+   *   visibleHeight = cuts[page + 1] - cuts[page]
+   *
+   * Therefore:
+   *
+   *       PREVIEW PAGE
+   *            =
+   *       PDF PAGE
+   *
+   * This is the important fix.
    */
+
   useEffect(() => {
     const updateScale = () => {
       const width = window.innerWidth;
@@ -734,80 +747,84 @@ function PagedCVPreview({
 
     updateScale();
 
-    window.addEventListener(
-      'resize',
-      updateScale
-    );
+    window.addEventListener('resize', updateScale);
 
-    return () =>
-      window.removeEventListener(
-        'resize',
-        updateScale
-      );
+    return () => {
+      window.removeEventListener('resize', updateScale);
+    };
   }, []);
 
+  /*
+   * Re-measure whenever CV content/style/language changes.
+   *
+   * PDF waits for fonts before calculating its cuts.
+   * Preview does the same so font-size/font-family changes
+   * cannot create different page boundaries.
+   */
   useEffect(() => {
-    const measure = () => {
+    let cancelled = false;
+
+    const measure = async () => {
       const root = measureRef.current;
 
       if (!root) return;
 
       /*
-       * This is intentionally the same function used by
-       * CVBuilderClient.tsx for PDF generation.
+       * Wait for fonts exactly like the PDF renderer.
        */
-      const cuts =
-        calculatePageCuts(root);
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
 
-      setPageCuts(cuts);
+      /*
+       * Give React/browser layout two frames to settle.
+       */
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      if (cancelled) return;
+
+      const cuts = calculatePageCuts(root);
+
+      if (!cancelled) {
+        setPageCuts(cuts);
+      }
     };
 
-    const timer =
-      window.setTimeout(
-        measure,
-        100
-      );
+    measure();
 
-    let observer:
-      | ResizeObserver
-      | null = null;
-
-    if (
-      typeof ResizeObserver !==
-        'undefined' &&
+    const observer =
+      typeof ResizeObserver !== 'undefined' &&
       measureRef.current
-    ) {
-      observer =
-        new ResizeObserver(
-          measure
-        );
+        ? new ResizeObserver(() => {
+            measure();
+          })
+        : null;
 
-      observer.observe(
-        measureRef.current
-      );
+    if (observer && measureRef.current) {
+      observer.observe(measureRef.current);
     }
 
-    window.addEventListener(
-      'resize',
-      measure
-    );
+    window.addEventListener('resize', measure);
 
     return () => {
-      window.clearTimeout(timer);
+      cancelled = true;
+
       observer?.disconnect();
 
-      window.removeEventListener(
-        'resize',
-        measure
-      );
+      window.removeEventListener('resize', measure);
     };
   }, [lang, cvData]);
 
-  const pageCount =
-    Math.max(
-      1,
-      pageCuts.length - 1
-    );
+  const pageCount = Math.max(
+    1,
+    pageCuts.length - 1
+  );
 
   const scaledPageWidth =
     A4_WIDTH * previewScale;
@@ -817,15 +834,14 @@ function PagedCVPreview({
 
   return (
     <>
-      {/* Hidden measurement copy.
-       *
-       * This is the same 794px-wide CV layout used for PDF
-       * measurement. The CSS below intentionally matches the PDF
-       * renderer's injected CSS so text/list heights are identical.
-       */}
+      {/* ============================================================
+          HIDDEN MEASUREMENT COPY
+
+          This is the exact same template structure used to calculate
+          the PDF page cuts.
+          ============================================================ */}
       <div
         ref={measureRef}
-        className="cv-preview-measure"
         aria-hidden="true"
         style={{
           position: 'absolute',
@@ -844,7 +860,9 @@ function PagedCVPreview({
         />
       </div>
 
-      {/* Visible page stack */}
+      {/* ============================================================
+          VISIBLE PREVIEW PAGE STACK
+          ============================================================ */}
       <div
         style={{
           width: '100%',
@@ -853,37 +871,47 @@ function PagedCVPreview({
           alignItems: 'center',
           gap: '18px',
           paddingTop: '4px',
+          paddingBottom: '20px',
         }}
       >
         {Array.from(
           { length: pageCount },
           (_, pageIndex) => {
-            const pageTop =
+            /*
+             * EXACT same boundaries used by PDF.
+             */
+            const pageStart =
               pageCuts[pageIndex] ?? 0;
 
-            const pageBottom =
+            const pageEnd =
               pageCuts[pageIndex + 1] ??
-              Math.min(
-                pageTop + PAGE_CONTENT_HEIGHT,
-                A4_HEIGHT
+              calculateContentHeight(
+                measureRef.current as HTMLElement
               );
 
             /*
-             * EXACTLY the amount of CV content the PDF draws on this
-             * page. Never let the preview show content from the next
-             * PDF page.
+             * Content visible on this PDF page.
+             *
+             * PDF uses:
+             *
+             * sourceHeight =
+             *   cuts[page + 1] - cuts[page]
+             *
+             * capped at PAGE_CONTENT_HEIGHT.
+             *
+             * Preview must use the same value.
              */
-            const contentHeight =
+            const pageContentHeight = Math.min(
               Math.max(
                 0,
-                Math.min(
-                  pageBottom - pageTop,
-                  PAGE_CONTENT_HEIGHT
-                )
-              );
+                pageEnd - pageStart
+              ),
+              PAGE_CONTENT_HEIGHT
+            );
 
             const scaledContentHeight =
-              contentHeight * previewScale;
+              pageContentHeight *
+              previewScale;
 
             return (
               <div
@@ -893,7 +921,9 @@ function PagedCVPreview({
                   flex: '0 0 auto',
                 }}
               >
-                {/* Clear page indicator */}
+                {/* ==================================================
+                    PAGE NUMBER
+                    ================================================== */}
                 <div
                   style={{
                     fontSize: '11px',
@@ -910,10 +940,9 @@ function PagedCVPreview({
                   / {pageCount}
                 </div>
 
-                {/* EXACT A4 page canvas.
-                 *
-                 * The bottom 3 cm remains white exactly like the PDF.
-                 */}
+                {/* ==================================================
+                    REAL A4 PAGE
+                    ================================================== */}
                 <div
                   style={{
                     width: `${scaledPageWidth}px`,
@@ -925,59 +954,61 @@ function PagedCVPreview({
                       '0 2px 12px rgba(0,0,0,0.14)',
                   }}
                 >
-                  {/* Native 794px CV coordinate system. */}
+                  {/* ==================================================
+                      EXACT PDF CONTENT WINDOW
+
+                      IMPORTANT:
+                      The clipping height is NOT the whole A4 height.
+
+                      It is exactly:
+
+                      cuts[next] - cuts[current]
+
+                      This prevents page 2 content from appearing
+                      inside page 1 preview.
+                      ================================================== */}
                   <div
                     style={{
                       position: 'absolute',
                       left: 0,
                       top: 0,
                       width: `${A4_WIDTH}px`,
-                      height: `${A4_HEIGHT}px`,
-                      transform:
-                        `scale(${previewScale})`,
-                      transformOrigin:
-                        'top left',
+                      height: `${pageContentHeight}px`,
+                      overflow: 'hidden',
                     }}
                   >
-                    {/* CRITICAL:
-                     *
-                     * Clip only to this page's actual PDF content
-                     * height. Previously this wrapper was A4-height,
-                     * which allowed the next page's content to leak
-                     * into the current preview page.
-                     */}
                     <div
                       style={{
                         position: 'absolute',
                         left: 0,
                         top: 0,
                         width: `${A4_WIDTH}px`,
-                        height: `${contentHeight}px`,
-                        overflow: 'hidden',
-                        background: '#ffffff',
+                        height: `${Math.max(
+                          A4_HEIGHT,
+                          pageStart +
+                            pageContentHeight
+                        )}px`,
+                        transform:
+                          `translateY(-${pageStart}px)`,
+                        transformOrigin:
+                          'top left',
                       }}
                     >
-                      <div
-                        style={{
-                          width: `${A4_WIDTH}px`,
-                          minHeight: `${A4_HEIGHT}px`,
-                          transform:
-                            `translateY(-${pageTop}px)`,
-                          transformOrigin:
-                            'top left',
-                        }}
-                      >
-                        <TemplateRenderer
-                          lang={lang}
-                          cvData={cvData}
-                        />
-                      </div>
+                      <TemplateRenderer
+                        lang={lang}
+                        cvData={cvData}
+                      />
                     </div>
                   </div>
 
-                  {/* Keep the unused bottom safety area pure white.
-                   * This is the same area the PDF leaves blank.
-                   */}
+                  {/* ==================================================
+                      REMAINING WHITE AREA
+
+                      PDF pageCanvas starts white and only draws the
+                      actual content height.
+
+                      Preview therefore keeps the same white area.
+                      ================================================== */}
                   {scaledContentHeight <
                     scaledPageHeight && (
                     <div
@@ -985,7 +1016,8 @@ function PagedCVPreview({
                         position: 'absolute',
                         left: 0,
                         right: 0,
-                        top: `${scaledContentHeight}px`,
+                        top:
+                          scaledContentHeight,
                         bottom: 0,
                         background:
                           '#ffffff',
