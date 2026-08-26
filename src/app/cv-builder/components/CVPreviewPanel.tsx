@@ -706,14 +706,16 @@ function PagedCVPreview({
     useState(0.58);
 
   /*
-   * The preview is a STACK OF REAL A4 PAGE CARDS.
+   * IMPORTANT:
+   * Preview uses the SAME page-cut calculation as the PDF.
    *
-   * Every card is independently clipped to A4.
-   * Page 1 contains the header.
-   * Page 2+ starts exactly at its calculated cut, so the header
-   * is not repeated and there is no fake header-sized whitespace.
+   * The PDF draws only the real content segment for each page and
+   * leaves the remaining 3 cm safety area white. The preview must do
+   * exactly the same thing. We therefore clip each preview page to
+   * (pageCuts[i + 1] - pageCuts[i]), NOT to the full A4 height.
    *
-   * This makes the preview visually match the PDF page-by-page.
+   * This prevents page 1 content from leaking into page 2 in preview
+   * and makes Preview and Download use the same visible boundaries.
    */
   useEffect(() => {
     const updateScale = () => {
@@ -750,6 +752,10 @@ function PagedCVPreview({
 
       if (!root) return;
 
+      /*
+       * This is intentionally the same function used by
+       * CVBuilderClient.tsx for PDF generation.
+       */
       const cuts =
         calculatePageCuts(root);
 
@@ -812,10 +818,14 @@ function PagedCVPreview({
   return (
     <>
       {/* Hidden measurement copy.
-       * It is the exact same template used for every visible page.
+       *
+       * This is the same 794px-wide CV layout used for PDF
+       * measurement. The CSS below intentionally matches the PDF
+       * renderer's injected CSS so text/list heights are identical.
        */}
       <div
         ref={measureRef}
+        className="cv-preview-measure"
         aria-hidden="true"
         style={{
           position: 'absolute',
@@ -848,8 +858,32 @@ function PagedCVPreview({
         {Array.from(
           { length: pageCount },
           (_, pageIndex) => {
-            const offset =
+            const pageTop =
               pageCuts[pageIndex] ?? 0;
+
+            const pageBottom =
+              pageCuts[pageIndex + 1] ??
+              Math.min(
+                pageTop + PAGE_CONTENT_HEIGHT,
+                A4_HEIGHT
+              );
+
+            /*
+             * EXACTLY the amount of CV content the PDF draws on this
+             * page. Never let the preview show content from the next
+             * PDF page.
+             */
+            const contentHeight =
+              Math.max(
+                0,
+                Math.min(
+                  pageBottom - pageTop,
+                  PAGE_CONTENT_HEIGHT
+                )
+              );
+
+            const scaledContentHeight =
+              contentHeight * previewScale;
 
             return (
               <div
@@ -876,7 +910,10 @@ function PagedCVPreview({
                   / {pageCount}
                 </div>
 
-                {/* Real A4 page card */}
+                {/* EXACT A4 page canvas.
+                 *
+                 * The bottom 3 cm remains white exactly like the PDF.
+                 */}
                 <div
                   style={{
                     width: `${scaledPageWidth}px`,
@@ -888,8 +925,7 @@ function PagedCVPreview({
                       '0 2px 12px rgba(0,0,0,0.14)',
                   }}
                 >
-                  {/* Render at native 794px width, then scale the
-                   * entire page as one unit. */}
+                  {/* Native 794px CV coordinate system. */}
                   <div
                     style={{
                       position: 'absolute',
@@ -897,29 +933,67 @@ function PagedCVPreview({
                       top: 0,
                       width: `${A4_WIDTH}px`,
                       height: `${A4_HEIGHT}px`,
-                      overflow: 'hidden',
                       transform:
                         `scale(${previewScale})`,
                       transformOrigin:
                         'top left',
                     }}
                   >
+                    {/* CRITICAL:
+                     *
+                     * Clip only to this page's actual PDF content
+                     * height. Previously this wrapper was A4-height,
+                     * which allowed the next page's content to leak
+                     * into the current preview page.
+                     */}
                     <div
                       style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
                         width: `${A4_WIDTH}px`,
-                        minHeight: `${A4_HEIGHT}px`,
-                        transform:
-                          `translateY(-${offset}px)`,
-                        transformOrigin:
-                          'top left',
+                        height: `${contentHeight}px`,
+                        overflow: 'hidden',
+                        background: '#ffffff',
                       }}
                     >
-                      <TemplateRenderer
-                        lang={lang}
-                        cvData={cvData}
-                      />
+                      <div
+                        style={{
+                          width: `${A4_WIDTH}px`,
+                          minHeight: `${A4_HEIGHT}px`,
+                          transform:
+                            `translateY(-${pageTop}px)`,
+                          transformOrigin:
+                            'top left',
+                        }}
+                      >
+                        <TemplateRenderer
+                          lang={lang}
+                          cvData={cvData}
+                        />
+                      </div>
                     </div>
                   </div>
+
+                  {/* Keep the unused bottom safety area pure white.
+                   * This is the same area the PDF leaves blank.
+                   */}
+                  {scaledContentHeight <
+                    scaledPageHeight && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: `${scaledContentHeight}px`,
+                        bottom: 0,
+                        background:
+                          '#ffffff',
+                        pointerEvents:
+                          'none',
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -1284,6 +1358,18 @@ export default function CVPreviewPanel({
 
       {/* RICH TEXT / PAGE CSS */}
       <style>{`
+        *,
+        *::before,
+        *::after {
+          box-sizing: border-box;
+        }
+
+        html,
+        body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
+        }
 
         #cv-preview-root,
         .cv-preview-page {
@@ -1294,6 +1380,13 @@ export default function CVPreviewPanel({
           width: 100% !important;
           max-width: 100% !important;
           box-sizing: border-box !important;
+          overflow-wrap: anywhere !important;
+          word-break: normal !important;
+        }
+
+        .cv-rich-content p {
+          margin: 0.15em 0 !important;
+          max-width: 100% !important;
           overflow-wrap: anywhere !important;
           word-break: normal !important;
         }
@@ -1362,8 +1455,11 @@ export default function CVPreviewPanel({
           padding: 0 !important;
         }
 
-        .cv-rich-content p {
-          margin: 0.15em 0;
+        .cv-rich-content li > ul,
+        .cv-rich-content li > ol {
+          margin-top: 3px !important;
+          margin-bottom: 3px !important;
+          margin-left: 2px !important;
         }
 
         .cv-rich-content strong {
@@ -1385,6 +1481,11 @@ export default function CVPreviewPanel({
           cursor: pointer !important;
           overflow-wrap: anywhere !important;
           word-break: break-word !important;
+        }
+
+        .cv-rich-content img {
+          max-width: 100% !important;
+          height: auto !important;
         }
 
         .cv-preview-page {
