@@ -214,12 +214,15 @@ const headerLabels: Record<
 const A4_WIDTH = 794;
 const A4_HEIGHT = 1123;
 
-/* 3 cm protected margin on every A4 page (96 CSS px/in). */
+/* Page 1 starts with the header at the top.
+ * Following pages have no repeated header/gap.
+ * Keep a 3 cm protected bottom safety area.
+ */
 const CM_PX = 96 / 2.54;
-const PAGE_TOP_MARGIN = Math.round(3 * CM_PX);
+const PAGE_TOP_MARGIN = 0;
 const PAGE_BOTTOM_MARGIN = Math.round(3 * CM_PX);
 const PAGE_CONTENT_HEIGHT =
-  A4_HEIGHT - PAGE_TOP_MARGIN - PAGE_BOTTOM_MARGIN;
+  A4_HEIGHT - PAGE_BOTTOM_MARGIN;
 
 /* ============================================================
    PAGE BREAK CALCULATOR
@@ -694,29 +697,27 @@ function PagedCVPreview({
   pageLabel: string;
 }) {
   const measureRef =
-    useRef<HTMLDivElement | null>(
-      null
-    );
+    useRef<HTMLDivElement | null>(null);
 
   const [pageCuts, setPageCuts] =
-    useState<number[]>([
-      0,
-      A4_HEIGHT,
-    ]);
+    useState<number[]>([0, A4_HEIGHT]);
 
-  const [
-    previewScale,
-    setPreviewScale,
-  ] = useState(0.58);
+  const [previewScale, setPreviewScale] =
+    useState(0.58);
 
   /*
-   * Responsive preview scale.
+   * The preview is a STACK OF REAL A4 PAGE CARDS.
+   *
+   * Every card is independently clipped to A4.
+   * Page 1 contains the header.
+   * Page 2+ starts exactly at its calculated cut, so the header
+   * is not repeated and there is no fake header-sized whitespace.
+   *
+   * This makes the preview visually match the PDF page-by-page.
    */
-
   useEffect(() => {
     const updateScale = () => {
-      const width =
-        window.innerWidth;
+      const width = window.innerWidth;
 
       if (width >= 1536) {
         setPreviewScale(0.74);
@@ -743,21 +744,14 @@ function PagedCVPreview({
       );
   }, []);
 
-  /*
-   * Measure the real CV height.
-   */
-
   useEffect(() => {
     const measure = () => {
-      const root =
-        measureRef.current;
+      const root = measureRef.current;
 
       if (!root) return;
 
       const cuts =
-        calculatePageCuts(
-          root
-        );
+        calculatePageCuts(root);
 
       setPageCuts(cuts);
     };
@@ -765,7 +759,7 @@ function PagedCVPreview({
     const timer =
       window.setTimeout(
         measure,
-        150
+        100
       );
 
     let observer:
@@ -774,7 +768,7 @@ function PagedCVPreview({
 
     if (
       typeof ResizeObserver !==
-      'undefined' &&
+        'undefined' &&
       measureRef.current
     ) {
       observer =
@@ -793,10 +787,7 @@ function PagedCVPreview({
     );
 
     return () => {
-      window.clearTimeout(
-        timer
-      );
-
+      window.clearTimeout(timer);
       observer?.disconnect();
 
       window.removeEventListener(
@@ -804,10 +795,7 @@ function PagedCVPreview({
         measure
       );
     };
-  }, [
-    lang,
-    cvData,
-  ]);
+  }, [lang, cvData]);
 
   const pageCount =
     Math.max(
@@ -815,34 +803,29 @@ function PagedCVPreview({
       pageCuts.length - 1
     );
 
-  const stackHeight =
-    pageCount *
-      A4_HEIGHT *
-      previewScale +
-    (pageCount - 1) * 18;
+  const scaledPageWidth =
+    A4_WIDTH * previewScale;
+
+  const scaledPageHeight =
+    A4_HEIGHT * previewScale;
 
   return (
     <>
-      {/* Hidden measurement copy */}
+      {/* Hidden measurement copy.
+       * It is the exact same template used for every visible page.
+       */}
       <div
         ref={measureRef}
         aria-hidden="true"
         style={{
-          position:
-            'absolute',
-          left:
-            '-100000px',
+          position: 'absolute',
+          left: '-100000px',
           top: 0,
-          width:
-            `${A4_WIDTH}px`,
-          minHeight:
-            `${A4_HEIGHT}px`,
-          background:
-            '#ffffff',
-          visibility:
-            'hidden',
-          pointerEvents:
-            'none',
+          width: `${A4_WIDTH}px`,
+          minHeight: `${A4_HEIGHT}px`,
+          background: '#ffffff',
+          visibility: 'hidden',
+          pointerEvents: 'none',
         }}
       >
         <TemplateRenderer
@@ -851,120 +834,98 @@ function PagedCVPreview({
         />
       </div>
 
-      {/* Visible pages */}
+      {/* Visible page stack */}
       <div
         style={{
-          width:
-            `${A4_WIDTH}px`,
-          transform:
-            `scale(${previewScale})`,
-          transformOrigin:
-            'top left',
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '18px',
+          paddingTop: '4px',
         }}
       >
-        <div
-          style={{
-            width:
-              `${A4_WIDTH}px`,
-          }}
-        >
-          {Array.from(
-            {
-              length:
-                pageCount,
-            },
-            (_, pageIndex) => {
-              const offset =
-                pageCuts[
-                  pageIndex
-                ] ?? 0;
+        {Array.from(
+          { length: pageCount },
+          (_, pageIndex) => {
+            const offset =
+              pageCuts[pageIndex] ?? 0;
 
-              return (
+            return (
+              <div
+                key={`cv-preview-page-${pageIndex}`}
+                style={{
+                  width: `${scaledPageWidth}px`,
+                  flex: '0 0 auto',
+                }}
+              >
+                {/* Clear page indicator */}
                 <div
-                  key={`cv-preview-page-${pageIndex}`}
                   style={{
-                    width:
-                      `${A4_WIDTH}px`,
-                    marginBottom:
-                      pageIndex <
-                      pageCount - 1
-                        ? '18px'
-                        : '0',
+                    fontSize: '11px',
+                    color: '#6b7280',
+                    textAlign: 'center',
+                    marginBottom: '6px',
+                    fontFamily:
+                      'system-ui, sans-serif',
+                    fontWeight: 600,
                   }}
                 >
-                  <div
-                    style={{
-                      fontSize:
-                        '12px',
-                      color:
-                        '#6b7280',
-                      textAlign:
-                        'center',
-                      marginBottom:
-                        '6px',
-                      fontFamily:
-                        'system-ui, sans-serif',
-                    }}
-                  >
-                    {pageLabel}{' '}
-                    {pageIndex +
-                      1}{' '}
-                    /{' '}
-                    {pageCount}
-                  </div>
+                  {pageLabel}{' '}
+                  {pageIndex + 1}{' '}
+                  / {pageCount}
+                </div>
 
+                {/* Real A4 page card */}
+                <div
+                  style={{
+                    width: `${scaledPageWidth}px`,
+                    height: `${scaledPageHeight}px`,
+                    position: 'relative',
+                    overflow: 'hidden',
+                    background: '#ffffff',
+                    boxShadow:
+                      '0 2px 12px rgba(0,0,0,0.14)',
+                  }}
+                >
+                  {/* Render at native 794px width, then scale the
+                   * entire page as one unit. */}
                   <div
                     style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
                       width: `${A4_WIDTH}px`,
                       height: `${A4_HEIGHT}px`,
                       overflow: 'hidden',
-                      background: '#ffffff',
-                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-                      position: 'relative',
+                      transform:
+                        `scale(${previewScale})`,
+                      transformOrigin:
+                        'top left',
                     }}
                   >
-                    {/* 3 cm protected top margin + 23.7 cm content area + 3 cm bottom margin. */}
                     <div
                       style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: `${PAGE_TOP_MARGIN}px`,
                         width: `${A4_WIDTH}px`,
-                        height: `${PAGE_CONTENT_HEIGHT}px`,
-                        overflow: 'hidden',
+                        minHeight: `${A4_HEIGHT}px`,
+                        transform:
+                          `translateY(-${offset}px)`,
+                        transformOrigin:
+                          'top left',
                       }}
                     >
-                      <div
-                        style={{
-                          width: `${A4_WIDTH}px`,
-                          minHeight: `${Math.max(A4_HEIGHT, cvData ? A4_HEIGHT : A4_HEIGHT)}px`,
-                          transform: `translateY(-${offset}px)`,
-                          transformOrigin: 'top left',
-                        }}
-                      >
-                        <TemplateRenderer
-                          lang={lang}
-                          cvData={cvData}
-                        />
-                      </div>
+                      <TemplateRenderer
+                        lang={lang}
+                        cvData={cvData}
+                      />
                     </div>
                   </div>
                 </div>
-              );
-            }
-          )}
-        </div>
+              </div>
+            );
+          }
+        )}
       </div>
-
-      {/* Spacer because transform does not affect layout */}
-      <div
-        style={{
-          height:
-            `${stackHeight}px`,
-          pointerEvents:
-            'none',
-        }}
-      />
     </>
   );
 }
