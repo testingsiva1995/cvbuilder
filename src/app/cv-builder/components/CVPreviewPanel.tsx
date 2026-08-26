@@ -214,81 +214,76 @@ const headerLabels: Record<
 const A4_WIDTH = 794;
 const A4_HEIGHT = 1123;
 
+/* 3 cm protected margin on every A4 page (96 CSS px/in). */
+const CM_PX = 96 / 2.54;
+const PAGE_TOP_MARGIN = Math.round(3 * CM_PX);
+const PAGE_BOTTOM_MARGIN = Math.round(3 * CM_PX);
+const PAGE_CONTENT_HEIGHT =
+  A4_HEIGHT - PAGE_TOP_MARGIN - PAGE_BOTTOM_MARGIN;
+
 /* ============================================================
    PAGE BREAK CALCULATOR
    ============================================================ */
 
-/*
- * The Modern template already marks individual entries with:
- *
- * breakInside: 'avoid'
- * pageBreakInside: 'avoid'
- *
- * We also treat the main body sections as blocks.
- *
- * This means a page will preferably end:
- *
- *   Summary
- *   Experience
- *   Education
- *
- * instead of:
- *
- *   Certifications heading
- *   ---- page break ----
- *   Certification item
- */
+function calculateContentHeight(root: HTMLElement): number {
+  const rootRect = root.getBoundingClientRect();
+  const body = root.querySelector(
+    '[data-cv-body="true"]'
+  ) as HTMLElement | null;
+
+  const bodyBottom = body
+    ? body.getBoundingClientRect().bottom - rootRect.top
+    : 0;
+
+  const visibleBottoms = Array.from(
+    root.querySelectorAll('[data-cv-body="true"] > *')
+  ).map((node) => {
+    const rect = (node as HTMLElement).getBoundingClientRect();
+    return rect.bottom - rootRect.top;
+  });
+
+  /* Ignore the template's min-height; measure actual content. */
+  return Math.max(1, Math.ceil(
+    Math.max(bodyBottom, ...visibleBottoms, 1)
+  ));
+}
 
 function calculatePageCuts(
   root: HTMLElement,
-  pageHeight = A4_HEIGHT
+  _unusedPageHeight = A4_HEIGHT
 ): number[] {
-  const totalHeight = Math.max(
-    pageHeight,
-    Math.ceil(root.scrollHeight)
-  );
+  const totalHeight = calculateContentHeight(root);
 
-  if (totalHeight <= pageHeight) {
+  if (totalHeight <= PAGE_CONTENT_HEIGHT) {
     return [0, totalHeight];
   }
 
   const rootRect = root.getBoundingClientRect();
-  const toTop = (element: HTMLElement) =>
-    element.getBoundingClientRect().top - rootRect.top;
-  const toBottom = (element: HTMLElement) =>
-    element.getBoundingClientRect().bottom - rootRect.top;
+  const body = root.querySelector(
+    '[data-cv-body="true"]'
+  ) as HTMLElement | null;
 
-  const MIN_USABLE_FRAGMENT = 90;
-  const MIN_PAGE_CONTENT = 120;
-
-  const body =
-    root.querySelector(
-      '[data-cv-body="true"]'
-    ) as HTMLElement | null;
-
-  const blocks = body
+  const topLevelBlocks = body
     ? Array.from(body.children)
         .map((child) => child as HTMLElement)
-        .filter((element) => element.getBoundingClientRect().height > 0)
+        .filter((el) => el.getBoundingClientRect().height > 0)
         .map((element) => ({
-          top: toTop(element),
-          bottom: toBottom(element),
+          element,
+          top: element.getBoundingClientRect().top - rootRect.top,
+          bottom: element.getBoundingClientRect().bottom - rootRect.top,
+          hard: element.hasAttribute('data-cv-page-block'),
         }))
     : [];
 
-  const boundaries: number[] = [];
-
+  const safeBoundaries: number[] = [];
   const addBoundary = (value: number) => {
     const rounded = Math.round(value);
-    if (
-      rounded > 20 &&
-      rounded < totalHeight - 1
-    ) {
-      boundaries.push(rounded);
+    if (rounded > 0 && rounded < totalHeight) {
+      safeBoundaries.push(rounded);
     }
   };
 
-  blocks.forEach((block) => {
+  topLevelBlocks.forEach((block) => {
     addBoundary(block.top);
     addBoundary(block.bottom);
   });
@@ -318,37 +313,41 @@ function calculatePageCuts(
     );
   });
 
-  const safe = Array.from(new Set(boundaries)).sort(
-    (a, b) => a - b
-  );
-
-  const blockAt = (y: number) =>
-    blocks.find(
-      (block) =>
-        y > block.top + 1 &&
-        y < block.bottom - 1
-    );
+  const safe = Array.from(new Set(safeBoundaries)).sort((a, b) => a - b);
+  const getBlockAt = (y: number) =>
+    topLevelBlocks.find((block) => y > block.top + 1 && y < block.bottom - 1);
 
   const cuts = [0];
   let start = 0;
+  const MIN_FRAGMENT = 90;
+  const MIN_CONTENT = 80;
 
-  while (start + pageHeight < totalHeight - 1) {
-    const target = start + pageHeight;
-    const crossing = blockAt(target - 1);
+  while (start + PAGE_CONTENT_HEIGHT < totalHeight - 1) {
+    const target = start + PAGE_CONTENT_HEIGHT;
+    const crossing = getBlockAt(target - 1);
 
     if (crossing) {
       const blockHeight = crossing.bottom - crossing.top;
+      const blockFitsFresh = blockHeight <= PAGE_CONTENT_HEIGHT;
       const spaceBefore = crossing.top - start;
-      const remainingInsideBlock = target - crossing.top;
 
-      /*
-       * A normal-sized section that would contribute only a tiny
-       * fragment is moved completely to the next page.
-       */
+      /* Hard page blocks (e.g. Skills + Languages + Certifications)
+         are never split when they can fit on a fresh page. */
+      if (blockFitsFresh && spaceBefore > MIN_CONTENT) {
+        const cut = Math.round(crossing.top);
+        if (cut > start) {
+          cuts.push(cut);
+          start = cut;
+          continue;
+        }
+      }
+
+      /* A normal-sized section that would leave only a tiny fragment
+         on this page also moves as one complete block. */
       if (
-        blockHeight <= pageHeight &&
-        spaceBefore > MIN_PAGE_CONTENT &&
-        remainingInsideBlock < MIN_USABLE_FRAGMENT
+        blockFitsFresh &&
+        spaceBefore > MIN_CONTENT &&
+        target - crossing.top < MIN_FRAGMENT
       ) {
         const cut = Math.round(crossing.top);
         cuts.push(cut);
@@ -356,19 +355,16 @@ function calculatePageCuts(
         continue;
       }
 
-      /*
-       * A long section may cross a page. Find the latest protected
-       * entry/bullet boundary that still fits.
-       */
-      if (blockHeight > pageHeight) {
+      /* If a block itself is taller than the usable page area, split it
+         only at a protected entry/bullet boundary. */
+      if (blockHeight > PAGE_CONTENT_HEIGHT) {
         const inside = safe.filter(
           (value) =>
-            value > start + MIN_PAGE_CONTENT &&
+            value > start + MIN_CONTENT &&
             value <= target &&
             value > crossing.top + 1 &&
             value < crossing.bottom - 1
         );
-
         if (inside.length) {
           const cut = inside[inside.length - 1];
           cuts.push(cut);
@@ -376,45 +372,25 @@ function calculatePageCuts(
           continue;
         }
       }
-
-      /*
-       * Normal section does not fit in remaining space: start it on
-       * the next page rather than splitting it.
-       */
-      if (
-        blockHeight <= pageHeight &&
-        crossing.top > start + MIN_PAGE_CONTENT
-      ) {
-        const cut = Math.round(crossing.top);
-        cuts.push(cut);
-        start = cut;
-        continue;
-      }
     }
 
+    /* Fallback: latest safe boundary, never past the usable area. */
     const candidates = safe.filter(
-      (value) =>
-        value > start + MIN_PAGE_CONTENT &&
-        value <= target
+      (value) => value > start + MIN_CONTENT && value <= target
     );
+    let cut = candidates.length ? candidates[candidates.length - 1] : target;
 
-    let cut = candidates.length
-      ? candidates[candidates.length - 1]
-      : target;
-
-    const candidateBlock = blockAt(cut + 1);
+    const candidateBlock = getBlockAt(cut + 1);
     if (
       candidateBlock &&
-      cut - candidateBlock.top < MIN_USABLE_FRAGMENT &&
-      candidateBlock.top > start + MIN_PAGE_CONTENT
+      candidateBlock.bottom - candidateBlock.top <= PAGE_CONTENT_HEIGHT &&
+      candidateBlock.top > start + MIN_CONTENT &&
+      cut - candidateBlock.top < MIN_FRAGMENT
     ) {
       cut = Math.round(candidateBlock.top);
     }
 
-    if (cut <= start) {
-      cut = target;
-    }
-
+    if (cut <= start) cut = target;
     cuts.push(Math.min(cut, totalHeight));
     start = cut;
   }
@@ -722,38 +698,38 @@ function PagedCVPreview({
 
                   <div
                     style={{
-                      width:
-                        `${A4_WIDTH}px`,
-                      height:
-                        `${A4_HEIGHT}px`,
-                      overflow:
-                        'hidden',
-                      background:
-                        '#ffffff',
-                      boxShadow:
-                        '0 4px 16px rgba(0,0,0,0.12)',
-                      position:
-                        'relative',
+                      width: `${A4_WIDTH}px`,
+                      height: `${A4_HEIGHT}px`,
+                      overflow: 'hidden',
+                      background: '#ffffff',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                      position: 'relative',
                     }}
                   >
+                    {/* 3 cm protected top margin + 23.7 cm content area + 3 cm bottom margin. */}
                     <div
                       style={{
-                        width:
-                          `${A4_WIDTH}px`,
-                        minHeight:
-                          `${A4_HEIGHT}px`,
-                        transform:
-                          `translateY(-${offset}px)`,
-                        transformOrigin:
-                          'top left',
+                        position: 'absolute',
+                        left: 0,
+                        top: `${PAGE_TOP_MARGIN}px`,
+                        width: `${A4_WIDTH}px`,
+                        height: `${PAGE_CONTENT_HEIGHT}px`,
+                        overflow: 'hidden',
                       }}
                     >
-                      <TemplateRenderer
-                        lang={lang}
-                        cvData={
-                          cvData
-                        }
-                      />
+                      <div
+                        style={{
+                          width: `${A4_WIDTH}px`,
+                          minHeight: `${Math.max(A4_HEIGHT, cvData ? A4_HEIGHT : A4_HEIGHT)}px`,
+                          transform: `translateY(-${offset}px)`,
+                          transformOrigin: 'top left',
+                        }}
+                      >
+                        <TemplateRenderer
+                          lang={lang}
+                          cvData={cvData}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
