@@ -225,181 +225,304 @@ const PAGE_CONTENT_HEIGHT =
    PAGE BREAK CALCULATOR
    ============================================================ */
 
-function calculateContentHeight(root: HTMLElement): number {
+/* ============================================================
+   HIERARCHICAL A4 PAGE MAP
+   ============================================================
+
+   The CV is paginated as:
+
+   section -> sub-block/entry -> rich-text item
+
+   Rules:
+   - 3 cm top and bottom are reserved on every page.
+   - A normal section may contain many entries; entries move
+     independently instead of moving the whole section.
+   - A section marked data-cv-page-block is one indivisible block
+     when it fits on a fresh page.
+   - The first entry stays with its section heading.
+   - An entry is kept together when it fits on a page.
+   - Only an entry larger than the usable page can split, and then
+     only at a protected rich-text boundary.
+   - Preview and PDF use the exact same page-cut algorithm.
+*/
+
+function rectRelative(root: HTMLElement, el: HTMLElement) {
   const rootRect = root.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  return {
+    top: rect.top - rootRect.top,
+    bottom: rect.bottom - rootRect.top,
+    height: rect.height,
+  };
+}
+
+function calculateContentHeight(root: HTMLElement): number {
   const body = root.querySelector(
     '[data-cv-body="true"]'
   ) as HTMLElement | null;
 
-  const bodyBottom = body
-    ? body.getBoundingClientRect().bottom - rootRect.top
-    : 0;
+  if (!body) {
+    return Math.max(1, Math.ceil(root.scrollHeight));
+  }
 
-  const visibleBottoms = Array.from(
-    root.querySelectorAll('[data-cv-body="true"] > *')
-  ).map((node) => {
-    const rect = (node as HTMLElement).getBoundingClientRect();
-    return rect.bottom - rootRect.top;
-  });
-
-  /* Ignore the template's min-height; measure actual content. */
-  return Math.max(1, Math.ceil(
-    Math.max(bodyBottom, ...visibleBottoms, 1)
-  ));
+  const bodyRect = rectRelative(root, body);
+  return Math.max(1, Math.ceil(bodyRect.bottom));
 }
 
-function calculatePageCuts(
+type PageUnit = {
+  top: number;
+  bottom: number;
+  hard: boolean;
+  kind: 'section' | 'entry';
+};
+
+function buildPageUnits(root: HTMLElement): PageUnit[] {
+  const body = root.querySelector(
+    '[data-cv-body="true"]'
+  ) as HTMLElement | null;
+
+  if (!body) return [];
+
+  const sections = Array.from(
+    body.querySelectorAll(':scope > [data-cv-section]')
+  ) as HTMLElement[];
+
+  const units: PageUnit[] = [];
+
+  for (const section of sections) {
+    const sectionRect = rectRelative(root, section);
+    if (sectionRect.height <= 0) continue;
+
+    const hard = section.hasAttribute('data-cv-page-block');
+
+    if (hard) {
+      units.push({
+        top: sectionRect.top,
+        bottom: sectionRect.bottom,
+        hard: true,
+        kind: 'section',
+      });
+      continue;
+    }
+
+    const entries = Array.from(
+      section.querySelectorAll('[data-cv-entry]')
+    ) as HTMLElement[];
+
+    if (!entries.length) {
+      units.push({
+        top: sectionRect.top,
+        bottom: sectionRect.bottom,
+        hard: false,
+        kind: 'section',
+      });
+      continue;
+    }
+
+    /* First entry includes the section heading, so the heading can never
+       be left alone at the bottom of a page. */
+    const first = rectRelative(root, entries[0]);
+    units.push({
+      top: sectionRect.top,
+      bottom: first.bottom,
+      hard: false,
+      kind: 'entry',
+    });
+
+    for (let i = 1; i < entries.length; i++) {
+      const entry = rectRelative(root, entries[i]);
+      if (entry.height <= 0) continue;
+      units.push({
+        top: entry.top,
+        bottom: entry.bottom,
+        hard: false,
+        kind: 'entry',
+      });
+    }
+  }
+
+  return units.sort((a, b) => a.top - b.top);
+}
+
+function getInternalSafeCuts(
   root: HTMLElement,
-  _unusedPageHeight = A4_HEIGHT
+  unit: PageUnit,
+  pageStart: number,
+  pageEnd: number
 ): number[] {
+  const rootRect = root.getBoundingClientRect();
+  const result: number[] = [];
+
+  const add = (el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const top = rect.top - rootRect.top;
+    const bottom = rect.bottom - rootRect.top;
+
+    if (
+      top > pageStart + 60 &&
+      bottom < pageEnd + 1 &&
+      top > unit.top + 1 &&
+      bottom < unit.bottom - 1
+    ) {
+      result.push(Math.round(top));
+    }
+  };
+
+  const inside = root.querySelectorAll(
+    '.cv-rich-content li, .cv-rich-content p, [data-cv-entry]'
+  );
+
+  inside.forEach((node) => {
+    const el = node as HTMLElement;
+    const owner = el.closest('[data-cv-entry]') as HTMLElement | null;
+
+    if (owner && owner !== el) {
+      const ownerRect = rectRelative(root, owner);
+      if (
+        ownerRect.top < unit.top - 1 ||
+        ownerRect.bottom > unit.bottom + 1
+      ) {
+        return;
+      }
+    }
+
+    const style = window.getComputedStyle(el);
+    const safe =
+      el.matches('.cv-rich-content li') ||
+      style.breakInside === 'avoid' ||
+      style.pageBreakInside === 'avoid';
+
+    if (safe) add(el);
+  });
+
+  return Array.from(new Set(result)).sort((a, b) => a - b);
+}
+
+function calculatePageCuts(root: HTMLElement): number[] {
   const totalHeight = calculateContentHeight(root);
 
   if (totalHeight <= PAGE_CONTENT_HEIGHT) {
     return [0, totalHeight];
   }
 
-  const rootRect = root.getBoundingClientRect();
-  const body = root.querySelector(
-    '[data-cv-body="true"]'
-  ) as HTMLElement | null;
+  const units = buildPageUnits(root);
 
-  const topLevelBlocks = body
-    ? Array.from(body.children)
-        .map((child) => child as HTMLElement)
-        .filter((el) => el.getBoundingClientRect().height > 0)
-        .map((element) => ({
-          element,
-          top: element.getBoundingClientRect().top - rootRect.top,
-          bottom: element.getBoundingClientRect().bottom - rootRect.top,
-          hard: element.hasAttribute('data-cv-page-block'),
-        }))
-    : [];
-
-  const safeBoundaries: number[] = [];
-  const addBoundary = (value: number) => {
-    const rounded = Math.round(value);
-    if (rounded > 0 && rounded < totalHeight) {
-      safeBoundaries.push(rounded);
+  if (!units.length) {
+    const cuts = [0];
+    let start = 0;
+    while (start < totalHeight - 1) {
+      const next = Math.min(
+        start + PAGE_CONTENT_HEIGHT,
+        totalHeight
+      );
+      cuts.push(next);
+      start = next;
     }
-  };
-
-  topLevelBlocks.forEach((block) => {
-    addBoundary(block.top);
-    addBoundary(block.bottom);
-  });
-
-  root.querySelectorAll('*').forEach((node) => {
-    const element = node as HTMLElement;
-    const rect = element.getBoundingClientRect();
-    if (rect.height <= 0) return;
-
-    const style = window.getComputedStyle(element);
-    const protectedElement =
-      element.matches('.cv-rich-content li') ||
-      style.breakInside === 'avoid' ||
-      style.pageBreakInside === 'avoid' ||
-      style.breakAfter === 'avoid' ||
-      style.pageBreakAfter === 'avoid';
-
-    if (!protectedElement) return;
-
-    addBoundary(rect.top - rootRect.top);
-    addBoundary(rect.bottom - rootRect.top);
-  });
-
-  root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((node) => {
-    addBoundary(
-      (node as HTMLElement).getBoundingClientRect().top - rootRect.top
-    );
-  });
-
-  const safe = Array.from(new Set(safeBoundaries)).sort((a, b) => a - b);
-  const getBlockAt = (y: number) =>
-    topLevelBlocks.find((block) => y > block.top + 1 && y < block.bottom - 1);
+    return cuts;
+  }
 
   const cuts = [0];
-  let start = 0;
-  const MIN_FRAGMENT = 90;
-  const MIN_CONTENT = 80;
+  let pageStart = 0;
+  const MIN_TOP_CONTENT = 45;
+  const MIN_BOTTOM_FRAGMENT = 70;
 
-  while (start + PAGE_CONTENT_HEIGHT < totalHeight - 1) {
-    const target = start + PAGE_CONTENT_HEIGHT;
-    const crossing = getBlockAt(target - 1);
+  while (pageStart < totalHeight - 1) {
+    const nominalEnd = Math.min(
+      pageStart + PAGE_CONTENT_HEIGHT,
+      totalHeight
+    );
 
-    if (crossing) {
-      const blockHeight = crossing.bottom - crossing.top;
-      const blockFitsFresh = blockHeight <= PAGE_CONTENT_HEIGHT;
-      const spaceBefore = crossing.top - start;
+    if (nominalEnd >= totalHeight - 1) {
+      cuts.push(totalHeight);
+      break;
+    }
 
-      /* Hard page blocks (e.g. Skills + Languages + Certifications)
-         are never split when they can fit on a fresh page. */
-      if (blockFitsFresh && spaceBefore > MIN_CONTENT) {
-        const cut = Math.round(crossing.top);
-        if (cut > start) {
-          cuts.push(cut);
-          start = cut;
-          continue;
-        }
-      }
+    const crossing = units.find(
+      (unit) =>
+        unit.top < nominalEnd - 1 &&
+        unit.bottom > nominalEnd + 1
+    );
 
-      /* A normal-sized section that would leave only a tiny fragment
-         on this page also moves as one complete block. */
-      if (
-        blockFitsFresh &&
-        spaceBefore > MIN_CONTENT &&
-        target - crossing.top < MIN_FRAGMENT
-      ) {
-        const cut = Math.round(crossing.top);
+    if (!crossing) {
+      cuts.push(nominalEnd);
+      pageStart = nominalEnd;
+      continue;
+    }
+
+    const unitHeight = crossing.bottom - crossing.top;
+    const fitsOnFreshPage = unitHeight <= PAGE_CONTENT_HEIGHT;
+    const spaceBefore = crossing.top - pageStart;
+
+    /* A complete unit that fits on a fresh page moves as a unit.
+       This is what prevents a new Education/Job/Project from being
+       stranded after only one line on the previous page. */
+    if (
+      fitsOnFreshPage &&
+      spaceBefore >= MIN_TOP_CONTENT
+    ) {
+      const cut = Math.round(crossing.top);
+      if (cut > pageStart) {
         cuts.push(cut);
-        start = cut;
+        pageStart = cut;
         continue;
       }
+    }
 
-      /* If a block itself is taller than the usable page area, split it
-         only at a protected entry/bullet boundary. */
-      if (blockHeight > PAGE_CONTENT_HEIGHT) {
-        const inside = safe.filter(
-          (value) =>
-            value > start + MIN_CONTENT &&
-            value <= target &&
-            value > crossing.top + 1 &&
-            value < crossing.bottom - 1
-        );
-        if (inside.length) {
-          const cut = inside[inside.length - 1];
+    /* The unit itself is too large for one page. It may split, but
+       only at a safe internal boundary. */
+    if (!fitsOnFreshPage) {
+      const safeCuts = getInternalSafeCuts(
+        root,
+        crossing,
+        pageStart,
+        nominalEnd
+      );
+
+      if (safeCuts.length) {
+        const cut = safeCuts[safeCuts.length - 1];
+        if (cut > pageStart) {
           cuts.push(cut);
-          start = cut;
+          pageStart = cut;
           continue;
         }
       }
+
+      /* Extremely long unbreakable content: use the page boundary as
+         the last resort. This is only possible when the unit itself is
+         taller than one page. */
+      cuts.push(nominalEnd);
+      pageStart = nominalEnd;
+      continue;
     }
 
-    /* Fallback: latest safe boundary, never past the usable area. */
-    const candidates = safe.filter(
-      (value) => value > start + MIN_CONTENT && value <= target
-    );
-    let cut = candidates.length ? candidates[candidates.length - 1] : target;
-
-    const candidateBlock = getBlockAt(cut + 1);
+    /* If the crossing unit starts very close to the page bottom, moving
+       it is preferable to leaving a tiny fragment. */
     if (
-      candidateBlock &&
-      candidateBlock.bottom - candidateBlock.top <= PAGE_CONTENT_HEIGHT &&
-      candidateBlock.top > start + MIN_CONTENT &&
-      cut - candidateBlock.top < MIN_FRAGMENT
+      fitsOnFreshPage &&
+      nominalEnd - crossing.top < MIN_BOTTOM_FRAGMENT &&
+      crossing.top > pageStart + MIN_TOP_CONTENT
     ) {
-      cut = Math.round(candidateBlock.top);
+      const cut = Math.round(crossing.top);
+      cuts.push(cut);
+      pageStart = cut;
+      continue;
     }
 
-    if (cut <= start) cut = target;
-    cuts.push(Math.min(cut, totalHeight));
-    start = cut;
+    /* Safety fallback. */
+    cuts.push(nominalEnd);
+    pageStart = nominalEnd;
   }
 
-  if (cuts[cuts.length - 1] !== totalHeight) {
-    cuts.push(totalHeight);
-  }
-
-  return cuts;
+  /* Remove duplicate/non-increasing cuts and never emit an empty page. */
+  return Array.from(
+    new Set(
+      cuts
+        .map((n) => Math.max(0, Math.min(totalHeight, Math.round(n))))
+        .filter((n) => n >= 0 && n <= totalHeight)
+    )
+  )
+    .sort((a, b) => a - b)
+    .filter((value, index, arr) => index === 0 || value > arr[index - 1]);
 }
 
 /* ============================================================
@@ -538,8 +661,7 @@ function PagedCVPreview({
 
       const cuts =
         calculatePageCuts(
-          root,
-          A4_HEIGHT
+          root
         );
 
       setPageCuts(cuts);
