@@ -906,12 +906,11 @@ export default function CVTemplateModerno({
               alignItems:
                 'start',
 
-              /* Keep the complete two-column block together when it fits. */
-              breakInside:
-                'avoid',
-
-              pageBreakInside:
-                'avoid',
+              /* HARD PAGE BLOCK: Skills + Languages + Certifications. */
+              breakInside: 'avoid',
+              pageBreakInside: 'avoid',
+              breakBefore: 'auto',
+              pageBreakBefore: 'auto',
             }}
           >
             {/* ==================================================
