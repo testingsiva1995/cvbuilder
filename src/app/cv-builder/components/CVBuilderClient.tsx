@@ -22,252 +22,149 @@ interface AuthUser {
 const A4_WIDTH_PX = 794;
 const A4_HEIGHT_PX = 1123;
 
-/*
- * The template itself is already an A4 canvas.
- * Do not add another 15mm margin around it here.
- * The old PDF code did that and then rasterised the result again.
- */
+/* A4 at 96 CSS dpi: 3 cm top + 3 cm bottom = 23.7 cm usable. */
+const CM_PX = 96 / 2.54;
+const PAGE_TOP_MARGIN_PX = Math.round(3 * CM_PX);
+const PAGE_BOTTOM_MARGIN_PX = Math.round(3 * CM_PX);
+const PAGE_CONTENT_HEIGHT_PX =
+  A4_HEIGHT_PX - PAGE_TOP_MARGIN_PX - PAGE_BOTTOM_MARGIN_PX;
+
 const PDF_SCALE = 2;
-const PAGE_BREAK_MIN = 60;
+
+function calculateContentHeight(root: HTMLElement): number {
+  const rootRect = root.getBoundingClientRect();
+  const body = root.querySelector('[data-cv-body="true"]') as HTMLElement | null;
+  if (!body) return A4_HEIGHT_PX;
+
+  const bodyBottom = body.getBoundingClientRect().bottom - rootRect.top;
+  const childBottoms = Array.from(body.children).map((node) => {
+    const rect = (node as HTMLElement).getBoundingClientRect();
+    return rect.bottom - rootRect.top;
+  });
+
+  /* Ignore the template's min-height so a short CV never creates a blank page. */
+  return Math.max(1, Math.ceil(Math.max(bodyBottom, ...childBottoms, 1)));
+}
 
 function getSafePageCuts(root: HTMLElement): number[] {
-  const totalHeight = Math.max(
-    A4_HEIGHT_PX,
-    Math.ceil(root.scrollHeight)
-  );
-
-  if (totalHeight <= A4_HEIGHT_PX) {
-    return [0, totalHeight];
-  }
+  const totalHeight = calculateContentHeight(root);
+  if (totalHeight <= PAGE_CONTENT_HEIGHT_PX) return [0, totalHeight];
 
   const rootRect = root.getBoundingClientRect();
-  const toRootY = (element: HTMLElement) =>
-    element.getBoundingClientRect().top - rootRect.top;
-  const bottomRootY = (element: HTMLElement) =>
-    element.getBoundingClientRect().bottom - rootRect.top;
+  const body = root.querySelector('[data-cv-body="true"]') as HTMLElement | null;
 
-  /*
-   * A page should be filled as much as possible, but a section should
-   * not be reduced to a tiny fragment just to use the last few pixels.
-   * 90px is roughly one short CV line + its surrounding spacing.
-   */
-  const MIN_USABLE_FRAGMENT = 90;
-  const MIN_PAGE_CONTENT = 120;
-
-  /*
-   * Moderno renders:
-   *   root -> header, body, style
-   * and the direct children of body are the major CV blocks.
-   * We use those blocks for the primary pagination decision.
-   */
-  const body =
-    root.querySelector(
-      '[data-cv-body="true"]'
-    ) as HTMLElement | null;
-
-  const topLevelBlocks = body
+  const blocks = body
     ? Array.from(body.children)
         .map((child) => child as HTMLElement)
-        .filter((element) => element.getBoundingClientRect().height > 0)
+        .filter((el) => el.getBoundingClientRect().height > 0)
         .map((element) => ({
-          element,
-          top: toRootY(element),
-          bottom: bottomRootY(element),
+          top: element.getBoundingClientRect().top - rootRect.top,
+          bottom: element.getBoundingClientRect().bottom - rootRect.top,
+          hard: element.hasAttribute('data-cv-page-block'),
         }))
     : [];
 
-  /*
-   * Safe internal boundaries. These are the tops/bottoms of entries,
-   * bullets and headings. We NEVER cut through a protected element.
-   */
-  const safeBoundaries: number[] = [];
-
-  const addBoundary = (value: number) => {
-    const rounded = Math.round(value);
-    if (
-      rounded > 20 &&
-      rounded < totalHeight - 1
-    ) {
-      safeBoundaries.push(rounded);
-    }
+  const safe: number[] = [];
+  const add = (value: number) => {
+    const v = Math.round(value);
+    if (v > 0 && v < totalHeight) safe.push(v);
   };
 
-  topLevelBlocks.forEach((block) => {
-    addBoundary(block.top);
-    addBoundary(block.bottom);
+  blocks.forEach((block) => {
+    add(block.top);
+    add(block.bottom);
   });
 
-  const descendants = Array.from(
-    root.querySelectorAll('*')
-  ) as HTMLElement[];
-
-  descendants.forEach((element) => {
+  root.querySelectorAll('*').forEach((node) => {
+    const element = node as HTMLElement;
     const rect = element.getBoundingClientRect();
     if (rect.height <= 0) return;
-
     const style = window.getComputedStyle(element);
-    const isListItem = element.matches('.cv-rich-content li');
-    const isProtected =
-      isListItem ||
+    const protectedElement =
+      element.matches('.cv-rich-content li') ||
       style.breakInside === 'avoid' ||
       style.pageBreakInside === 'avoid' ||
       style.breakAfter === 'avoid' ||
       style.pageBreakAfter === 'avoid';
-
-    if (!isProtected) return;
-
-    addBoundary(rect.top - rootRect.top);
-    addBoundary(rect.bottom - rootRect.top);
+    if (!protectedElement) return;
+    add(rect.top - rootRect.top);
+    add(rect.bottom - rootRect.top);
   });
 
-  root.querySelectorAll(
-    'h1,h2,h3,h4,h5,h6'
-  ).forEach((element) => {
-    addBoundary(
-      element.getBoundingClientRect().top - rootRect.top
-    );
+  root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((node) => {
+    add((node as HTMLElement).getBoundingClientRect().top - rootRect.top);
   });
 
-  const uniqueBoundaries = Array.from(
-    new Set(safeBoundaries)
-  ).sort((a, b) => a - b);
-
+  const unique = Array.from(new Set(safe)).sort((a, b) => a - b);
   const getBlockAt = (y: number) =>
-    topLevelBlocks.find(
-      (block) =>
-        y > block.top + 1 &&
-        y < block.bottom - 1
-    );
-
-  const getInternalCut = (
-    start: number,
-    target: number,
-    block: {
-      top: number;
-      bottom: number;
-    }
-  ) => {
-    const candidates = uniqueBoundaries.filter(
-      (value) =>
-        value > start + MIN_PAGE_CONTENT &&
-        value <= target &&
-        value > block.top + 1 &&
-        value < block.bottom - 1
-    );
-
-    /*
-     * Prefer the latest safe boundary. This maximises page usage.
-     */
-    return candidates.length
-      ? candidates[candidates.length - 1]
-      : null;
-  };
+    blocks.find((block) => y > block.top + 1 && y < block.bottom - 1);
 
   const cuts = [0];
   let start = 0;
+  const MIN_CONTENT = 80;
+  const MIN_FRAGMENT = 90;
 
-  while (start + A4_HEIGHT_PX < totalHeight - 1) {
-    const target = start + A4_HEIGHT_PX;
-    const crossingBlock = getBlockAt(target - 1);
+  while (start + PAGE_CONTENT_HEIGHT_PX < totalHeight - 1) {
+    const target = start + PAGE_CONTENT_HEIGHT_PX;
+    const crossing = getBlockAt(target - 1);
 
-    /*
-     * CASE 1: the next complete top-level section fits on the current
-     * page. There is no reason to move it to the next page.
-     */
-    if (crossingBlock) {
-      const blockHeight =
-        crossingBlock.bottom - crossingBlock.top;
-      const spaceBeforeBlock =
-        crossingBlock.top - start;
+    if (crossing) {
+      const blockHeight = crossing.bottom - crossing.top;
+      const fitsFresh = blockHeight <= PAGE_CONTENT_HEIGHT_PX;
+      const spaceBefore = crossing.top - start;
 
-      /*
-       * If the whole section fits on a fresh A4 page but only a tiny
-       * part of it would fit here, move the COMPLETE section forward.
-       * This is the key rule that prevents a one-line orphan section.
-       */
-      if (
-        blockHeight <= A4_HEIGHT_PX &&
-        spaceBeforeBlock > MIN_PAGE_CONTENT &&
-        target - crossingBlock.top < MIN_USABLE_FRAGMENT
-      ) {
-        cuts.push(Math.round(crossingBlock.top));
-        start = Math.round(crossingBlock.top);
-        continue;
-      }
-
-      /*
-       * If the section is larger than one page, it must split internally.
-       * Use the latest safe entry/bullet boundary that fits.
-       */
-      if (blockHeight > A4_HEIGHT_PX) {
-        const internalCut = getInternalCut(
-          start,
-          target,
-          crossingBlock
-        );
-
-        if (internalCut && internalCut > start) {
-          cuts.push(internalCut);
-          start = internalCut;
+      /* Any complete block that fits on a fresh page moves as a unit.
+         data-cv-page-block makes this rule explicit for the 2-column
+         Skills + Languages + Certifications block. */
+      if (fitsFresh && spaceBefore > MIN_CONTENT) {
+        const cut = Math.round(crossing.top);
+        if (cut > start) {
+          cuts.push(cut);
+          start = cut;
           continue;
         }
       }
 
-      /*
-       * The section is normal-sized but doesn't fit in the remaining
-       * space. If the previous content is already substantial, start the
-       * whole section on the next page.
-       */
-      if (
-        blockHeight <= A4_HEIGHT_PX &&
-        crossingBlock.top > start + MIN_PAGE_CONTENT
-      ) {
-        cuts.push(Math.round(crossingBlock.top));
-        start = Math.round(crossingBlock.top);
-        continue;
+      /* A block taller than the usable page may split, but only at a
+         protected entry/bullet boundary. */
+      if (!fitsFresh) {
+        const inside = unique.filter(
+          (value) =>
+            value > start + MIN_CONTENT &&
+            value <= target &&
+            value > crossing.top + 1 &&
+            value < crossing.bottom - 1
+        );
+        if (inside.length) {
+          const cut = inside[inside.length - 1];
+          cuts.push(cut);
+          start = cut;
+          continue;
+        }
       }
     }
 
-    /*
-     * CASE 2: no useful top-level block boundary exists. Use the latest
-     * safe internal boundary. This handles long experience/summary blocks.
-     */
-    const internalCandidates = uniqueBoundaries.filter(
-      (value) =>
-        value > start + MIN_PAGE_CONTENT &&
-        value <= target
+    const candidates = unique.filter(
+      (value) => value > start + MIN_CONTENT && value <= target
     );
+    let cut = candidates.length ? candidates[candidates.length - 1] : target;
 
-    let cut = internalCandidates.length
-      ? internalCandidates[internalCandidates.length - 1]
-      : target;
-
-    /*
-     * Never leave only a tiny fragment of the current block on a page.
-     * If the candidate is extremely close to the beginning of a block,
-     * move to that block's top instead.
-     */
     const candidateBlock = getBlockAt(cut + 1);
     if (
       candidateBlock &&
-      cut - candidateBlock.top < MIN_USABLE_FRAGMENT &&
-      candidateBlock.top > start + MIN_PAGE_CONTENT
+      candidateBlock.bottom - candidateBlock.top <= PAGE_CONTENT_HEIGHT_PX &&
+      candidateBlock.top > start + MIN_CONTENT &&
+      cut - candidateBlock.top < MIN_FRAGMENT
     ) {
       cut = Math.round(candidateBlock.top);
     }
 
-    if (cut <= start) {
-      cut = target;
-    }
-
+    if (cut <= start) cut = target;
     cuts.push(Math.min(cut, totalHeight));
     start = cut;
   }
 
-  if (cuts[cuts.length - 1] !== totalHeight) {
-    cuts.push(totalHeight);
-  }
-
+  if (cuts[cuts.length - 1] !== totalHeight) cuts.push(totalHeight);
   return cuts;
 }
 
@@ -342,9 +239,10 @@ function addPdfLinks(
           pageWidthMM;
 
         const y =
+          30 +
           ((visibleTop - pageTop) /
-            A4_HEIGHT_PX) *
-          pageHeightMM;
+            PAGE_CONTENT_HEIGHT_PX) *
+          237;
 
         const w =
           ((right - left) /
@@ -353,8 +251,8 @@ function addPdfLinks(
 
         const h =
           ((visibleBottom - visibleTop) /
-            A4_HEIGHT_PX) *
-          pageHeightMM;
+            PAGE_CONTENT_HEIGHT_PX) *
+          237;
 
         try {
           pdf.link(
@@ -1061,10 +959,7 @@ export default function CVBuilderClient() {
             PDF_SCALE;
 
           pageCanvas.height =
-            Math.min(
-              sourceHeight,
-              A4_HEIGHT_PX * PDF_SCALE
-            );
+            A4_HEIGHT_PX * PDF_SCALE;
 
           const ctx =
             pageCanvas.getContext(
@@ -1088,24 +983,24 @@ export default function CVBuilderClient() {
           );
 
           /*
-           * Draw the actual content at the top of the A4 page.
-           * No artificial 15mm white border is added.
+           * Every PDF page has a protected 3 cm top and 3 cm bottom margin.
+           * The CV content is rendered at its natural scale inside the
+           * remaining 23.7 cm; it is NOT vertically stretched.
            */
-          const destinationHeight = Math.min(
-            sourceHeight,
-            pageCanvas.height
-          );
+          const topPx = PAGE_TOP_MARGIN_PX * PDF_SCALE;
+          const maxContentPx = PAGE_CONTENT_HEIGHT_PX * PDF_SCALE;
+          const drawHeight = Math.min(sourceHeight, maxContentPx);
 
           ctx.drawImage(
             canvas,
             0,
             sourceTop,
             canvas.width,
-            sourceHeight,
+            drawHeight,
             0,
-            0,
+            topPx,
             canvas.width,
-            destinationHeight
+            drawHeight
           );
 
           /*
@@ -1117,21 +1012,13 @@ export default function CVBuilderClient() {
               'image/png'
             );
 
-          const physicalHeightMM =
-            (pageCanvas.height /
-              (A4_HEIGHT_PX * PDF_SCALE)) *
-            pageHeightMM;
-
           pdf.addImage(
             pageImg,
             'PNG',
             0,
             0,
             pageWidthMM,
-            Math.min(
-              pageHeightMM,
-              physicalHeightMM
-            ),
+            pageHeightMM,
             undefined,
             'FAST'
           );
