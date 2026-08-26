@@ -214,6 +214,8 @@ const headerLabels: Record<
 const A4_WIDTH = 794;
 const A4_HEIGHT = 1123;
 
+const CM = A4_WIDTH / 21;
+
 /* Page 1 starts with the header at the top.
  * Following pages have no repeated header/gap.
  * Keep a 3 cm protected bottom safety area.
