@@ -300,14 +300,11 @@ export default function CVTemplateModerno({
       >
         <div
           style={{
-            display:
-              'flex',
-
-            alignItems:
-              'center',
-
-            gap:
-              '20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '20px',
+            width: '100%',
+            minWidth: 0,
           }}
         >
           {/* PROFILE PHOTO */}
@@ -344,11 +341,11 @@ export default function CVTemplateModerno({
 
           <div
             style={{
-              color:
-                '#fff',
-
-              minWidth:
-                0,
+              color: '#fff',
+              minWidth: 0,
+              flex: '1 1 0',
+              width: 0,
+              maxWidth: '100%',
             }}
           >
             <h1
@@ -409,26 +406,17 @@ export default function CVTemplateModerno({
 
             <div
               style={{
-                display:
-                  'flex',
-
-                flexWrap:
-                  'wrap',
-
-                gap:
-                  '5px 18px',
-
-                marginTop:
-                  '10px',
-
-                fontSize:
-                  fs(11),
-
-                lineHeight:
-                  1.35,
-
-                color:
-                  'rgba(255,255,255,0.82)',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '5px 18px',
+                marginTop: '10px',
+                fontSize: fs(11),
+                lineHeight: 1.35,
+                color: 'rgba(255,255,255,0.82)',
+                width: '100%',
+                maxWidth: '100%',
+                minWidth: 0,
+                overflowWrap: 'anywhere',
               }}
             >
               {p.email && (
