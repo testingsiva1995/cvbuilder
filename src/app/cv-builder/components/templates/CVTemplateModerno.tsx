@@ -502,6 +502,7 @@ export default function CVTemplateModerno({
 
         {p.summary && (
           <div
+            data-cv-section="summary"
             style={{
               ...sectionStyle,
             }}
@@ -543,6 +544,7 @@ export default function CVTemplateModerno({
         {cvData.experience
           .length > 0 && (
           <div
+            data-cv-section="experience"
             style={{
               ...sectionStyle,
             }}
@@ -566,6 +568,7 @@ export default function CVTemplateModerno({
               {cvData.experience.map(
                 (exp) => (
                   <div
+                    data-cv-entry="experience"
                     key={`mod-exp-${exp.id}`}
                     style={{
                       ...entryStyle,
@@ -725,6 +728,7 @@ export default function CVTemplateModerno({
         {cvData.education
           .length > 0 && (
           <div
+            data-cv-section="education"
             style={{
               ...sectionStyle,
             }}
@@ -748,6 +752,7 @@ export default function CVTemplateModerno({
               {cvData.education.map(
                 (edu) => (
                   <div
+                    data-cv-entry="education"
                     key={`mod-edu-${edu.id}`}
                     style={{
                       ...entryStyle,
@@ -890,6 +895,7 @@ export default function CVTemplateModerno({
           cvData.certifications
             .length > 0) && (
           <div
+            data-cv-section="skills-languages-certifications"
             data-cv-page-block="skills-languages-certifications"
             style={{
               ...sectionStyle,
@@ -950,6 +956,7 @@ export default function CVTemplateModerno({
                         skill
                       ) => (
                         <div
+                          data-cv-entry="skills"
                           key={`mod-skill-${skill.id}`}
                           style={{
                             ...entryStyle,
@@ -1192,6 +1199,7 @@ export default function CVTemplateModerno({
                         cert
                       ) => (
                         <div
+                          data-cv-entry="certifications"
                           key={`mod-cert-${cert.id}`}
                           style={{
                             ...entryStyle,
@@ -1257,6 +1265,7 @@ export default function CVTemplateModerno({
         {cvData.projects
           .length > 0 && (
           <div
+            data-cv-section="projects"
             style={{
               ...sectionStyle,
             }}
@@ -1280,6 +1289,7 @@ export default function CVTemplateModerno({
               {cvData.projects.map(
                 (proj) => (
                   <div
+                    data-cv-entry="projects"
                     key={`mod-proj-${proj.id}`}
                     style={{
                       ...entryStyle,
@@ -1365,6 +1375,7 @@ export default function CVTemplateModerno({
         {cvData.achievements
           .length > 0 && (
           <div
+            data-cv-section="achievements"
             style={{
               ...sectionStyle,
             }}
@@ -1388,6 +1399,7 @@ export default function CVTemplateModerno({
               {cvData.achievements.map(
                 (ach) => (
                   <div
+                    data-cv-entry="achievements"
                     key={`mod-ach-${ach.id}`}
                     style={{
                       ...entryStyle,
