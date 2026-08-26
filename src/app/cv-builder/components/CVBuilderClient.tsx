@@ -29,9 +29,17 @@ const A4_HEIGHT_PX = 1123;
  */
 const CM_PX = 96 / 2.54;
 const PAGE_TOP_MARGIN_PX = 0;
+// Keep the 3 cm bottom safety area.
+// Additional small safety buffer prevents the last text line,
+// descenders, bullet dots, etc. from being clipped at the page cut.
+const PAGE_CUT_SAFETY_PX = 12;
+
 const PAGE_BOTTOM_MARGIN_PX = Math.round(3 * CM_PX);
+
 const PAGE_CONTENT_HEIGHT_PX =
-  A4_HEIGHT_PX - PAGE_BOTTOM_MARGIN_PX;
+  A4_HEIGHT_PX -
+  PAGE_BOTTOM_MARGIN_PX -
+  PAGE_CUT_SAFETY_PX;
 
 const PDF_SCALE = 2;
 
