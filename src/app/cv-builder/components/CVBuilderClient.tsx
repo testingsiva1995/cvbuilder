@@ -71,8 +71,36 @@ function calculateContentHeight(root: HTMLElement): number {
     return Math.max(1, Math.ceil(root.scrollHeight));
   }
 
-  const bodyRect = rectRelative(root, body);
-  return Math.max(1, Math.ceil(bodyRect.bottom));
+  const rootRect = root.getBoundingClientRect();
+
+  /*
+   * IMPORTANT:
+   * Use the bottom of the LAST REAL CV SECTION, not the body's
+   * padding/min-height. This prevents an otherwise empty trailing
+   * PDF/preview page.
+   */
+  const sections = Array.from(
+    body.querySelectorAll(':scope > [data-cv-section]')
+  ) as HTMLElement[];
+
+  const visibleSections = sections.filter(
+    (section) => section.getBoundingClientRect().height > 0
+  );
+
+  if (visibleSections.length) {
+    const last = visibleSections[visibleSections.length - 1];
+    const rect = last.getBoundingClientRect();
+    return Math.max(
+      1,
+      Math.ceil(rect.bottom - rootRect.top)
+    );
+  }
+
+  const bodyRect = body.getBoundingClientRect();
+  return Math.max(
+    1,
+    Math.ceil(bodyRect.bottom - rootRect.top)
+  );
 }
 
 type PageUnit = {
@@ -101,6 +129,11 @@ function buildPageUnits(root: HTMLElement): PageUnit[] {
 
     const hard = section.hasAttribute('data-cv-page-block');
 
+    /*
+     * Hard blocks are intentionally rare. Moderno uses one for the
+     * two-column Skills/Languages/Certifications grid because splitting
+     * the two-column grid creates a confusing visual result.
+     */
     if (hard) {
       units.push({
         top: sectionRect.top,
@@ -112,7 +145,7 @@ function buildPageUnits(root: HTMLElement): PageUnit[] {
     }
 
     const entries = Array.from(
-      section.querySelectorAll('[data-cv-entry]')
+      section.querySelectorAll(':scope [data-cv-entry]')
     ) as HTMLElement[];
 
     if (!entries.length) {
@@ -125,8 +158,7 @@ function buildPageUnits(root: HTMLElement): PageUnit[] {
       continue;
     }
 
-    /* First entry includes the section heading, so the heading can never
-       be left alone at the bottom of a page. */
+    /* The first entry owns the section heading. */
     const first = rectRelative(root, entries[0]);
     units.push({
       top: sectionRect.top,
@@ -138,6 +170,7 @@ function buildPageUnits(root: HTMLElement): PageUnit[] {
     for (let i = 1; i < entries.length; i++) {
       const entry = rectRelative(root, entries[i]);
       if (entry.height <= 0) continue;
+
       units.push({
         top: entry.top,
         bottom: entry.bottom,
@@ -150,58 +183,93 @@ function buildPageUnits(root: HTMLElement): PageUnit[] {
   return units.sort((a, b) => a.top - b.top);
 }
 
-function getInternalSafeCuts(
+function getSafeBoundaries(
   root: HTMLElement,
   unit: PageUnit,
   pageStart: number,
   pageEnd: number
 ): number[] {
   const rootRect = root.getBoundingClientRect();
-  const result: number[] = [];
+  const boundaries: number[] = [];
 
-  const add = (el: HTMLElement) => {
+  const add = (value: number) => {
+    const n = Math.round(value);
+
+    if (
+      n > pageStart + 30 &&
+      n < pageEnd + 1 &&
+      n > unit.top + 1 &&
+      n < unit.bottom - 1
+    ) {
+      boundaries.push(n);
+    }
+  };
+
+  const addElement = (el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
     const top = rect.top - rootRect.top;
     const bottom = rect.bottom - rootRect.top;
 
-    if (
-      top > pageStart + 60 &&
-      bottom < pageEnd + 1 &&
-      top > unit.top + 1 &&
-      bottom < unit.bottom - 1
-    ) {
-      result.push(Math.round(top));
-    }
+    /*
+     * A cut is safe at the TOP or BOTTOM of a protected element.
+     * Using both is important: if a bullet does not fit completely,
+     * we can keep all previous bullets on page 1 and continue with the
+     * next bullet on page 2.
+     */
+    add(top);
+    add(bottom);
   };
 
-  const inside = root.querySelectorAll(
-    '.cv-rich-content li, .cv-rich-content p, [data-cv-entry]'
-  );
+  /* Individual CV entries. */
+  root
+    .querySelectorAll('[data-cv-entry]')
+    .forEach((node) => {
+      const el = node as HTMLElement;
+      const rect = rectRelative(root, el);
 
-  inside.forEach((node) => {
-    const el = node as HTMLElement;
-    const owner = el.closest('[data-cv-entry]') as HTMLElement | null;
-
-    if (owner && owner !== el) {
-      const ownerRect = rectRelative(root, owner);
       if (
-        ownerRect.top < unit.top - 1 ||
-        ownerRect.bottom > unit.bottom + 1
+        rect.top >= unit.top - 1 &&
+        rect.bottom <= unit.bottom + 1
       ) {
-        return;
+        addElement(el);
       }
-    }
+    });
 
-    const style = window.getComputedStyle(el);
-    const safe =
-      el.matches('.cv-rich-content li') ||
-      style.breakInside === 'avoid' ||
-      style.pageBreakInside === 'avoid';
+  /* Rich-text paragraphs and list items. */
+  root
+    .querySelectorAll(
+      '.cv-rich-content li, .cv-rich-content p'
+    )
+    .forEach((node) => {
+      const el = node as HTMLElement;
+      const rect = rectRelative(root, el);
 
-    if (safe) add(el);
-  });
+      if (
+        rect.top >= unit.top - 1 &&
+        rect.bottom <= unit.bottom + 1
+      ) {
+        addElement(el);
+      }
+    });
 
-  return Array.from(new Set(result)).sort((a, b) => a - b);
+  /* Headings are safe only at their TOP, never through their text. */
+  root
+    .querySelectorAll('h1,h2,h3,h4,h5,h6')
+    .forEach((node) => {
+      const el = node as HTMLElement;
+      const rect = rectRelative(root, el);
+
+      if (
+        rect.top >= unit.top - 1 &&
+        rect.top < unit.bottom - 1
+      ) {
+        add(rect.top);
+      }
+    });
+
+  return Array.from(new Set(boundaries)).sort(
+    (a, b) => a - b
+  );
 }
 
 function calculatePageCuts(root: HTMLElement): number[] {
@@ -216,22 +284,34 @@ function calculatePageCuts(root: HTMLElement): number[] {
   if (!units.length) {
     const cuts = [0];
     let start = 0;
+
     while (start < totalHeight - 1) {
       const next = Math.min(
         start + PAGE_CONTENT_HEIGHT_PX,
         totalHeight
       );
+
+      if (next <= start) break;
+
       cuts.push(next);
       start = next;
     }
+
     return cuts;
   }
 
   const cuts = [0];
   let pageStart = 0;
-  const MIN_TOP_CONTENT = 45;
-  const MIN_BOTTOM_FRAGMENT = 70;
 
+  /*
+   * IMPORTANT CHANGE:
+   * Do NOT move an entire Job/Education/Project just because it does
+   * not completely fit in the remaining space.
+   *
+   * We first try to fill the page with the LAST safe boundary before
+   * A4's usable limit. Therefore a job can continue on page 2 with a
+   * few bullets/lines instead of creating a huge white area on page 1.
+   */
   while (pageStart < totalHeight - 1) {
     const nominalEnd = Math.min(
       pageStart + PAGE_CONTENT_HEIGHT_PX,
@@ -255,58 +335,60 @@ function calculatePageCuts(root: HTMLElement): number[] {
       continue;
     }
 
-    const unitHeight = crossing.bottom - crossing.top;
-    const fitsOnFreshPage = unitHeight <= PAGE_CONTENT_HEIGHT_PX;
-    const spaceBefore = crossing.top - pageStart;
+    /*
+     * A hard block (currently the two-column skills grid) stays whole
+     * when it fits on a fresh page. This is the one intentional case
+     * where we prefer whitespace over a visually broken grid.
+     */
+    if (crossing.hard) {
+      const hardHeight = crossing.bottom - crossing.top;
 
-    /* A complete unit that fits on a fresh page moves as a unit.
-       This is what prevents a new Education/Job/Project from being
-       stranded after only one line on the previous page. */
-    if (
-      fitsOnFreshPage &&
-      spaceBefore >= MIN_TOP_CONTENT
-    ) {
-      const cut = Math.round(crossing.top);
-      if (cut > pageStart) {
-        cuts.push(cut);
-        pageStart = cut;
-        continue;
-      }
-    }
+      if (
+        hardHeight <= PAGE_CONTENT_HEIGHT_PX &&
+        crossing.top > pageStart + 30
+      ) {
+        const cut = Math.round(crossing.top);
 
-    /* The unit itself is too large for one page. It may split, but
-       only at a safe internal boundary. */
-    if (!fitsOnFreshPage) {
-      const safeCuts = getInternalSafeCuts(
-        root,
-        crossing,
-        pageStart,
-        nominalEnd
-      );
-
-      if (safeCuts.length) {
-        const cut = safeCuts[safeCuts.length - 1];
         if (cut > pageStart) {
           cuts.push(cut);
           pageStart = cut;
           continue;
         }
       }
-
-      /* Extremely long unbreakable content: use the page boundary as
-         the last resort. This is only possible when the unit itself is
-         taller than one page. */
-      cuts.push(nominalEnd);
-      pageStart = nominalEnd;
-      continue;
     }
 
-    /* If the crossing unit starts very close to the page bottom, moving
-       it is preferable to leaving a tiny fragment. */
+    /*
+     * For normal sections/entries, ALWAYS prefer the latest safe
+     * internal boundary. This is what prevents large white spaces.
+     */
+    const safeBoundaries = getSafeBoundaries(
+      root,
+      crossing,
+      pageStart,
+      nominalEnd
+    );
+
+    if (safeBoundaries.length) {
+      const cut = safeBoundaries[safeBoundaries.length - 1];
+
+      if (cut > pageStart + 30) {
+        cuts.push(cut);
+        pageStart = cut;
+        continue;
+      }
+    }
+
+    /*
+     * No safe internal boundary exists before the page edge.
+     * If the crossing unit fits on a fresh page, move it as a last
+     * resort. Otherwise use the A4 boundary; this only affects content
+     * that has no safe break point at all.
+     */
+    const unitHeight = crossing.bottom - crossing.top;
+
     if (
-      fitsOnFreshPage &&
-      nominalEnd - crossing.top < MIN_BOTTOM_FRAGMENT &&
-      crossing.top > pageStart + MIN_TOP_CONTENT
+      unitHeight <= PAGE_CONTENT_HEIGHT_PX &&
+      crossing.top > pageStart + 30
     ) {
       const cut = Math.round(crossing.top);
       cuts.push(cut);
@@ -314,23 +396,40 @@ function calculatePageCuts(root: HTMLElement): number[] {
       continue;
     }
 
-    /* Safety fallback. */
     cuts.push(nominalEnd);
     pageStart = nominalEnd;
   }
 
-  /* Remove duplicate/non-increasing cuts and never emit an empty page. */
-  return Array.from(
+  /*
+   * Remove duplicates and any trailing empty/near-empty page.
+   * A page with less than 12px of real content is not useful.
+   */
+  const cleaned = Array.from(
     new Set(
       cuts
-        .map((n) => Math.max(0, Math.min(totalHeight, Math.round(n))))
-        .filter((n) => n >= 0 && n <= totalHeight)
+        .map((n) =>
+          Math.max(
+            0,
+            Math.min(totalHeight, Math.round(n))
+          )
+        )
     )
   )
     .sort((a, b) => a - b)
-    .filter((value, index, arr) => index === 0 || value > arr[index - 1]);
-}
+    .filter(
+      (value, index, arr) =>
+        index === 0 || value > arr[index - 1]
+    );
 
+  while (
+    cleaned.length > 2 &&
+    totalHeight - cleaned[cleaned.length - 2] < 12
+  ) {
+    cleaned.splice(cleaned.length - 2, 1);
+  }
+
+  return cleaned;
+}
 function addPdfLinks(
   pdf: {
     link: (
