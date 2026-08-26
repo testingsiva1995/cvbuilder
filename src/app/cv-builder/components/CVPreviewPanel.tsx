@@ -220,9 +220,16 @@ const A4_HEIGHT = 1123;
  */
 const CM_PX = 96 / 2.54;
 const PAGE_TOP_MARGIN = 0;
-const PAGE_BOTTOM_MARGIN = Math.round(3 * CM_PX);
+// Small safety buffer so Preview uses the same safe page boundary
+// as the PDF and never visually clips the final text line.
+const PAGE_CUT_SAFETY = 12;
+
+const PAGE_BOTTOM_MARGIN = 3 * CM;
+
 const PAGE_CONTENT_HEIGHT =
-  A4_HEIGHT - PAGE_BOTTOM_MARGIN;
+  A4_HEIGHT -
+  PAGE_BOTTOM_MARGIN -
+  PAGE_CUT_SAFETY;
 
 /* ============================================================
    PAGE BREAK CALCULATOR
