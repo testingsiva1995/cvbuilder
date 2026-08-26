@@ -2,7 +2,6 @@
 
 import React, {
   useEffect,
-  useRef,
   useState,
 } from 'react';
 
@@ -696,343 +695,557 @@ function PagedCVPreview({
   cvData: CVData;
   pageLabel: string;
 }) {
-  const measureRef = useRef<HTMLDivElement | null>(null);
-
-  const [pageCuts, setPageCuts] = useState<number[]>([
-    0,
-    A4_HEIGHT,
-  ]);
-
-  const [previewScale, setPreviewScale] = useState(0.58);
+  const [pageImages, setPageImages] = useState<string[]>([]);
+  const [rendering, setRendering] = useState(true);
 
   /*
-   * IMPORTANT:
+   * FINAL PREVIEW ARCHITECTURE
    *
-   * Preview does NOT create its own pagination.
+   * Preview is rendered through the SAME html2canvas path used by
+   * the PDF exporter:
    *
-   * It uses the SAME calculatePageCuts() used by the PDF
-   * pagination system.
+   *     CV HTML
+   *        ↓
+   *   html2canvas (2x)
+   *        ↓
+   *    same page cuts
+   *        ↓
+   *   Page 1 image
+   *   Page 2 image
+   *   Page 3 image
    *
-   * PDF:
-   *   sourceTop = cuts[page] * PDF_SCALE
-   *   sourceBottom = cuts[page + 1] * PDF_SCALE
+   * The PDF exporter then uses those same cut coordinates.
    *
-   * Preview:
-   *   offset = cuts[page]
-   *   visibleHeight = cuts[page + 1] - cuts[page]
-   *
-   * Therefore:
-   *
-   *       PREVIEW PAGE
-   *            =
-   *       PDF PAGE
-   *
-   * This is the important fix.
+   * This avoids the old DOM-transform preview, which could show one
+   * page, duplicate content, or disagree with the downloaded PDF.
    */
 
-  useEffect(() => {
-    const updateScale = () => {
-      const width = window.innerWidth;
-
-      if (width >= 1536) {
-        setPreviewScale(0.74);
-      } else if (width >= 1280) {
-        setPreviewScale(0.68);
-      } else if (width >= 1024) {
-        setPreviewScale(0.62);
-      } else {
-        setPreviewScale(0.58);
-      }
-    };
-
-    updateScale();
-
-    window.addEventListener('resize', updateScale);
-
-    return () => {
-      window.removeEventListener('resize', updateScale);
-    };
-  }, []);
-
-  /*
-   * Re-measure whenever CV content/style/language changes.
-   *
-   * PDF waits for fonts before calculating its cuts.
-   * Preview does the same so font-size/font-family changes
-   * cannot create different page boundaries.
-   */
   useEffect(() => {
     let cancelled = false;
+    let container: HTMLDivElement | null = null;
+    let root: { unmount: () => void } | null = null;
 
-    const measure = async () => {
-      const root = measureRef.current;
+    const renderPreview = async () => {
+      setRendering(true);
 
-      if (!root) return;
+      try {
+        const html2canvas =
+          (await import('html2canvas')).default;
 
-      /*
-       * Wait for fonts exactly like the PDF renderer.
-       */
-      if (document.fonts?.ready) {
-        await document.fonts.ready;
-      }
+        const { createRoot } =
+          await import('react-dom/client');
 
-      /*
-       * Give React/browser layout two frames to settle.
-       */
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
+        const ReactModule =
+          await import('react');
+
+        /*
+         * IMPORTANT:
+         * This CSS is intentionally the same rich-text CSS used by
+         * CVBuilderClient.handleDownload().
+         */
+        const styleText = `
+          *,
+          *::before,
+          *::after {
+            box-sizing: border-box;
+          }
+
+          html,
+          body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+          }
+
+          [data-cv-export-root] {
+            margin: 0 !important;
+            padding: 0 !important;
+            top: 0 !important;
+          }
+
+          [data-cv-export-root] > div:not(style) {
+            margin-top: 0 !important;
+          }
+
+          .cv-rich-content {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            overflow-wrap: anywhere !important;
+            word-break: normal !important;
+          }
+
+          .cv-rich-content p {
+            margin: 0.15em 0 !important;
+            max-width: 100% !important;
+            overflow-wrap: anywhere !important;
+            word-break: normal !important;
+          }
+
+          .cv-rich-content ul,
+          .cv-rich-content ol {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            margin: 5px 0 !important;
+            padding: 0 !important;
+            list-style: none !important;
+          }
+
+          .cv-rich-content ul li,
+          .cv-rich-content ol li {
+            position: relative !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            margin: 2px 0 !important;
+            padding-left: 19px !important;
+            line-height: 1.35 !important;
+            overflow-wrap: anywhere !important;
+            word-break: normal !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+
+          .cv-rich-content ul li::before {
+            content: '•';
+            position: absolute;
+            left: 0;
+            top: 0.02em;
+            width: 14px;
+            text-align: center;
+            font-size: 0.82em;
+            line-height: 1.35;
+            font-weight: 700;
+          }
+
+          .cv-rich-content ol {
+            counter-reset: cv-list-item;
+          }
+
+          .cv-rich-content ol li {
+            counter-increment: cv-list-item;
+          }
+
+          .cv-rich-content ol li::before {
+            content: counter(cv-list-item) '.';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 17px;
+            text-align: right;
+            font-size: 0.9em;
+            line-height: 1.35;
+            font-weight: 500;
+          }
+
+          .cv-rich-content li p {
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          .cv-rich-content li > ul,
+          .cv-rich-content li > ol {
+            margin-top: 3px !important;
+            margin-bottom: 3px !important;
+            margin-left: 2px !important;
+          }
+
+          .cv-rich-content a {
+            color: inherit !important;
+            text-decoration: underline !important;
+            pointer-events: auto !important;
+            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+          }
+
+          .cv-rich-content img {
+            max-width: 100% !important;
+            height: auto !important;
+          }
+        `;
+
+        /*
+         * This container intentionally matches the PDF export container.
+         * Do NOT use visibility:hidden here because html2canvas must
+         * render the actual pixels.
+         */
+        container =
+          document.createElement('div');
+
+        container.setAttribute(
+          'data-cv-export-root',
+          'true'
+        );
+
+        container.style.cssText = `
+          position: fixed;
+          left: -100000px;
+          top: 0;
+          width: ${A4_WIDTH}px;
+          min-height: ${A4_HEIGHT}px;
+          margin: 0;
+          padding: 0;
+          background: #ffffff;
+          z-index: -1;
+          pointer-events: none;
+          visibility: visible;
+        `;
+
+        const styleEl =
+          document.createElement('style');
+
+        styleEl.textContent = styleText;
+
+        container.appendChild(styleEl);
+        document.body.appendChild(container);
+
+        root = createRoot(container);
+
+        root.render(
+          ReactModule.createElement(
+            TemplateRenderer,
+            {
+              lang,
+              cvData,
+            }
+          )
+        );
+
+        /*
+         * Wait for exactly the things the PDF renderer waits for.
+         */
+        if (document.fonts?.ready) {
+          await document.fonts.ready;
+        }
+
+        await new Promise<void>((resolve) => {
           requestAnimationFrame(() => {
-            resolve();
+            requestAnimationFrame(() => {
+              resolve();
+            });
           });
         });
-      });
 
-      if (cancelled) return;
+        const images =
+          Array.from(
+            container.querySelectorAll('img')
+          );
 
-      const cuts = calculatePageCuts(root);
+        await Promise.all(
+          images.map((img) => {
+            if (img.complete) {
+              return Promise.resolve();
+            }
 
-      if (!cancelled) {
-        setPageCuts(cuts);
+            return new Promise<void>((resolve) => {
+              img.addEventListener(
+                'load',
+                () => resolve(),
+                { once: true }
+              );
+
+              img.addEventListener(
+                'error',
+                () => resolve(),
+                { once: true }
+              );
+            });
+          })
+        );
+
+        if (cancelled) return;
+
+        /*
+         * IMPORTANT:
+         * Calculate cuts AFTER fonts/images/layout are ready.
+         * This is the same page-cut algorithm used by PDF.
+         */
+        const cuts =
+          calculatePageCuts(container);
+
+        /*
+         * Render the COMPLETE CV once at the exact same scale as PDF.
+         */
+        const canvas =
+          await html2canvas(
+            container,
+            {
+              scale: 2,
+              useCORS: true,
+              allowTaint: false,
+              backgroundColor: '#ffffff',
+              logging: false,
+              width: A4_WIDTH,
+              height: Math.ceil(
+                container.scrollHeight
+              ),
+              windowWidth: A4_WIDTH,
+              imageTimeout: 15000,
+              removeContainer: false,
+            }
+          );
+
+        if (cancelled) return;
+
+        /*
+         * Make independent A4 page images using EXACTLY the same
+         * sourceTop/sourceHeight logic as the PDF exporter.
+         */
+        const imagesForPreview: string[] = [];
+
+        for (
+          let page = 0;
+          page < cuts.length - 1;
+          page++
+        ) {
+          const sourceTop =
+            cuts[page] * 2;
+
+          const sourceBottom =
+            Math.min(
+              cuts[page + 1] * 2,
+              canvas.height
+            );
+
+          const sourceHeight =
+            Math.max(
+              1,
+              sourceBottom - sourceTop
+            );
+
+          const pageCanvas =
+            document.createElement('canvas');
+
+          pageCanvas.width =
+            A4_WIDTH * 2;
+
+          pageCanvas.height =
+            A4_HEIGHT * 2;
+
+          const ctx =
+            pageCanvas.getContext('2d');
+
+          if (!ctx) continue;
+
+          ctx.fillStyle = '#ffffff';
+
+          ctx.fillRect(
+            0,
+            0,
+            pageCanvas.width,
+            pageCanvas.height
+          );
+
+          const maxContentPx =
+            PAGE_CONTENT_HEIGHT * 2;
+
+          const drawHeight =
+            Math.min(
+              sourceHeight,
+              maxContentPx
+            );
+
+          /*
+           * EXACT SAME drawImage call used by PDF.
+           *
+           * No CSS transform.
+           * No DOM crop.
+           * No second pagination system.
+           */
+          ctx.drawImage(
+            canvas,
+            0,
+            sourceTop,
+            canvas.width,
+            drawHeight,
+            0,
+            0,
+            canvas.width,
+            drawHeight
+          );
+
+          /*
+           * Same visual compression level as PDF.
+           * This makes Preview visually representative of the actual
+           * downloaded PDF instead of showing a different DOM version.
+           */
+          imagesForPreview.push(
+            pageCanvas.toDataURL(
+              'image/jpeg',
+              0.94
+            )
+          );
+        }
+
+        if (!cancelled) {
+          setPageImages(imagesForPreview);
+        }
+      } catch (error) {
+        console.error(
+          'CV preview render error:',
+          error
+        );
+
+        if (!cancelled) {
+          setPageImages([]);
+        }
+      } finally {
+        try {
+          root?.unmount();
+        } catch {}
+
+        if (container?.parentNode) {
+          container.parentNode.removeChild(
+            container
+          );
+        }
+
+        if (!cancelled) {
+          setRendering(false);
+        }
       }
     };
 
-    measure();
-
-    const observer =
-      typeof ResizeObserver !== 'undefined' &&
-      measureRef.current
-        ? new ResizeObserver(() => {
-            measure();
-          })
-        : null;
-
-    if (observer && measureRef.current) {
-      observer.observe(measureRef.current);
-    }
-
-    window.addEventListener('resize', measure);
+    /*
+     * Small debounce prevents 10 canvas renders when the user is
+     * typing/editing rich text rapidly.
+     */
+    const timer =
+      window.setTimeout(
+        renderPreview,
+        120
+      );
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
 
-      observer?.disconnect();
+      try {
+        root?.unmount();
+      } catch {}
 
-      window.removeEventListener('resize', measure);
+      if (container?.parentNode) {
+        container.parentNode.removeChild(
+          container
+        );
+      }
     };
   }, [lang, cvData]);
 
-  const pageCount = Math.max(
-    1,
-    pageCuts.length - 1
-  );
-
-  const scaledPageWidth =
-    A4_WIDTH * previewScale;
-
-  const scaledPageHeight =
-    A4_HEIGHT * previewScale;
+  const pageCount =
+    pageImages.length;
 
   return (
-    <>
-      {/* ============================================================
-          HIDDEN MEASUREMENT COPY
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        background: '#f3f4f6',
+        padding:
+          '12px 12px 24px',
+        boxSizing: 'border-box',
+      }}
+    >
+      {rendering &&
+        pageCount === 0 && (
+          <div
+            style={{
+              minHeight: '300px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#6b7280',
+              fontSize: '13px',
+              fontFamily:
+                'system-ui, sans-serif',
+            }}
+          >
+            {pageLabel}...
+          </div>
+        )}
 
-          This is the exact same template structure used to calculate
-          the PDF page cuts.
-          ============================================================ */}
-      <div
-        ref={measureRef}
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          left: '-100000px',
-          top: 0,
-          width: `${A4_WIDTH}px`,
-          minHeight: `${A4_HEIGHT}px`,
-          background: '#ffffff',
-          visibility: 'hidden',
-          pointerEvents: 'none',
-        }}
-      >
-        <TemplateRenderer
-          lang={lang}
-          cvData={cvData}
-        />
-      </div>
+      {!rendering &&
+        pageCount === 0 && (
+          <div
+            style={{
+              padding: '30px 12px',
+              textAlign: 'center',
+              color: '#6b7280',
+              fontSize: '13px',
+              fontFamily:
+                'system-ui, sans-serif',
+            }}
+          >
+            {pageLabel}
+          </div>
+        )}
 
-      {/* ============================================================
-          VISIBLE PREVIEW PAGE STACK
-          ============================================================ */}
       <div
         style={{
           width: '100%',
+          maxWidth: '794px',
+          margin: '0 auto',
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'center',
-          gap: '18px',
-          paddingTop: '4px',
-          paddingBottom: '20px',
+          gap: '20px',
         }}
       >
-        {Array.from(
-          { length: pageCount },
-          (_, pageIndex) => {
-            /*
-             * EXACT same boundaries used by PDF.
-             */
-            const pageStart =
-              pageCuts[pageIndex] ?? 0;
-
-            const pageEnd =
-              pageCuts[pageIndex + 1] ??
-              calculateContentHeight(
-                measureRef.current as HTMLElement
-              );
-
-            /*
-             * Content visible on this PDF page.
-             *
-             * PDF uses:
-             *
-             * sourceHeight =
-             *   cuts[page + 1] - cuts[page]
-             *
-             * capped at PAGE_CONTENT_HEIGHT.
-             *
-             * Preview must use the same value.
-             */
-            const pageContentHeight = Math.min(
-              Math.max(
-                0,
-                pageEnd - pageStart
-              ),
-              PAGE_CONTENT_HEIGHT
-            );
-
-            const scaledContentHeight =
-              pageContentHeight *
-              previewScale;
-
-            return (
+        {pageImages.map(
+          (src, pageIndex) => (
+            <div
+              key={`preview-page-${pageIndex}-${src.slice(-24)}`}
+              style={{
+                width: '100%',
+              }}
+            >
               <div
-                key={`cv-preview-page-${pageIndex}`}
                 style={{
-                  width: `${scaledPageWidth}px`,
-                  flex: '0 0 auto',
+                  textAlign: 'center',
+                  fontFamily:
+                    'system-ui, sans-serif',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: '#6b7280',
+                  marginBottom: '6px',
                 }}
               >
-                {/* ==================================================
-                    PAGE NUMBER
-                    ================================================== */}
-                <div
-                  style={{
-                    fontSize: '11px',
-                    color: '#6b7280',
-                    textAlign: 'center',
-                    marginBottom: '6px',
-                    fontFamily:
-                      'system-ui, sans-serif',
-                    fontWeight: 600,
-                  }}
-                >
-                  {pageLabel}{' '}
-                  {pageIndex + 1}{' '}
-                  / {pageCount}
-                </div>
-
-                {/* ==================================================
-                    REAL A4 PAGE
-                    ================================================== */}
-                <div
-                  style={{
-                    width: `${scaledPageWidth}px`,
-                    height: `${scaledPageHeight}px`,
-                    position: 'relative',
-                    overflow: 'hidden',
-                    background: '#ffffff',
-                    boxShadow:
-                      '0 2px 12px rgba(0,0,0,0.14)',
-                  }}
-                >
-                  {/* ==================================================
-                      EXACT PDF CONTENT WINDOW
-
-                      IMPORTANT:
-                      The clipping height is NOT the whole A4 height.
-
-                      It is exactly:
-
-                      cuts[next] - cuts[current]
-
-                      This prevents page 2 content from appearing
-                      inside page 1 preview.
-                      ================================================== */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      width: `${A4_WIDTH}px`,
-                      height: `${pageContentHeight}px`,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        width: `${A4_WIDTH}px`,
-                        height: `${Math.max(
-                          A4_HEIGHT,
-                          pageStart +
-                            pageContentHeight
-                        )}px`,
-                        transform:
-                          `translateY(-${pageStart}px)`,
-                        transformOrigin:
-                          'top left',
-                      }}
-                    >
-                      <TemplateRenderer
-                        lang={lang}
-                        cvData={cvData}
-                      />
-                    </div>
-                  </div>
-
-                  {/* ==================================================
-                      REMAINING WHITE AREA
-
-                      PDF pageCanvas starts white and only draws the
-                      actual content height.
-
-                      Preview therefore keeps the same white area.
-                      ================================================== */}
-                  {scaledContentHeight <
-                    scaledPageHeight && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top:
-                          scaledContentHeight,
-                        bottom: 0,
-                        background:
-                          '#ffffff',
-                        pointerEvents:
-                          'none',
-                      }}
-                    />
-                  )}
-                </div>
+                {pageLabel}{' '}
+                {pageIndex + 1} / {pageCount}
               </div>
-            );
-          }
+
+              <div
+                style={{
+                  width: '100%',
+                  background: '#ffffff',
+                  boxShadow:
+                    '0 2px 14px rgba(0,0,0,0.14)',
+                  overflow: 'hidden',
+                }}
+              >
+                <img
+                  src={src}
+                  alt={`${pageLabel} ${pageIndex + 1}`}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    height: 'auto',
+                    aspectRatio:
+                      `${A4_WIDTH} / ${A4_HEIGHT}`,
+                    objectFit: 'contain',
+                    background:
+                      '#ffffff',
+                  }}
+                />
+              </div>
+            </div>
+          )
         )}
       </div>
-    </>
+    </div>
   );
 }
 
