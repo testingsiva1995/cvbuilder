@@ -22,12 +22,16 @@ interface AuthUser {
 const A4_WIDTH_PX = 794;
 const A4_HEIGHT_PX = 1123;
 
-/* A4 at 96 CSS dpi: 3 cm top + 3 cm bottom = 23.7 cm usable. */
+/* A4 at 96 CSS dpi.
+ * Page 1 starts with the CV header at the very top.
+ * Following pages have NO repeated header and therefore no
+ * artificial header gap. We keep a 3 cm protected bottom area.
+ */
 const CM_PX = 96 / 2.54;
-const PAGE_TOP_MARGIN_PX = Math.round(3 * CM_PX);
+const PAGE_TOP_MARGIN_PX = 0;
 const PAGE_BOTTOM_MARGIN_PX = Math.round(3 * CM_PX);
 const PAGE_CONTENT_HEIGHT_PX =
-  A4_HEIGHT_PX - PAGE_TOP_MARGIN_PX - PAGE_BOTTOM_MARGIN_PX;
+  A4_HEIGHT_PX - PAGE_BOTTOM_MARGIN_PX;
 
 const PDF_SCALE = 2;
 
@@ -40,7 +44,9 @@ const PDF_SCALE = 2;
    section -> sub-block/entry -> rich-text item
 
    Rules:
-   - 3 cm top and bottom are reserved on every page.
+   - Page 1 starts with the header at the physical top.
+   - Following pages have no repeated header or artificial header gap.
+   - A 3 cm bottom safety area is reserved on every page.
    - A normal section may contain many entries; entries move
      independently instead of moving the whole section.
    - A section marked data-cv-page-block is one indivisible block
@@ -501,10 +507,9 @@ function addPdfLinks(
           pageWidthMM;
 
         const y =
-          30 +
           ((visibleTop - pageTop) /
             PAGE_CONTENT_HEIGHT_PX) *
-          237;
+          (pageHeightMM - 30);
 
         const w =
           ((right - left) /
@@ -1245,13 +1250,25 @@ export default function CVBuilderClient() {
           );
 
           /*
-           * Every PDF page has a protected 3 cm top and 3 cm bottom margin.
-           * The CV content is rendered at its natural scale inside the
-           * remaining 23.7 cm; it is NOT vertically stretched.
+           * IMPORTANT:
+           * The CV header belongs to page 1 only and starts at the
+           * physical top of the page. Subsequent pages start exactly
+           * where the previous page cut ended; there is NO repeated
+           * header and NO artificial header-sized white gap.
+           *
+           * A 3 cm protected white area remains at the bottom.
+           *
+           * Never vertically stretch the content.
            */
-          const topPx = PAGE_TOP_MARGIN_PX * PDF_SCALE;
-          const maxContentPx = PAGE_CONTENT_HEIGHT_PX * PDF_SCALE;
-          const drawHeight = Math.min(sourceHeight, maxContentPx);
+          const maxContentPx =
+            PAGE_CONTENT_HEIGHT_PX *
+            PDF_SCALE;
+
+          const drawHeight =
+            Math.min(
+              sourceHeight,
+              maxContentPx
+            );
 
           ctx.drawImage(
             canvas,
@@ -1260,23 +1277,27 @@ export default function CVBuilderClient() {
             canvas.width,
             drawHeight,
             0,
-            topPx,
+            0,
             canvas.width,
             drawHeight
           );
 
           /*
-           * PNG preserves text edges/colors better than JPEG.
-           * jsPDF compression is enabled, unlike the old code.
+           * JPEG at high quality dramatically reduces the PDF size
+           * compared with full-page PNG while remaining sharp enough
+           * for normal CV viewing and printing.
+           *
+           * 0.94 is deliberately conservative for text clarity.
            */
           const pageImg =
             pageCanvas.toDataURL(
-              'image/png'
+              'image/jpeg',
+              0.94
             );
 
           pdf.addImage(
             pageImg,
-            'PNG',
+            'JPEG',
             0,
             0,
             pageWidthMM,
